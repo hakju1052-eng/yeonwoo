@@ -359,8 +359,9 @@ def deposits(ST, DEP, win=15):
             continue
         # 가정산(운송비 미공제) 정산서만 오고 본정산이 빠진 날 — 입금은 지급액에서 운송비(만 원 단위, 30만 원까지)를 뺀 금액 (v1.27.2, 대전농협 9/3·9/16 경리 확인)
         diff = a - c["금액"]
-        fr = c[(diff >= 9999) & (diff <= 300001) & ((diff / 10000).round() * 10000 - diff).abs() < 2]
-        if len(fr):
+        gajeong = not (pd.notna(r.get("운임")) and r.get("운임"))                 # 운임이 이미 빠진 정산서는 해당 없음 (v1.29.1)
+        fr = c[(diff >= 9999) & (diff <= 300001) & (((diff / 10000).round() * 10000 - diff).abs() < 2)]   # 괄호 빠져 엉뚱한 입금과 짝지어지던 것 바로잡음 (v1.29.1)
+        if gajeong and len(fr):
             j = fr.index[0]
             d_ = int(round(a - dep.at[j, "금액"]))
             dep.at[j, "짝"] = f"{r['날짜']:%m/%d} 정산(운송비 {d_:,}원 차감 추정)"
