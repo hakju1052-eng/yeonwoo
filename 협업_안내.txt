@@ -1,6 +1,6 @@
 통합관리 앱 — 여러 사람이 같이 고치는 방법 (GitHub)
 
-■ 구조
+■ 구조 (2026-10-12 연결 완료 — 저장소 yeonwoo, 메인PC 첫 커밋 46개 파일)
   GitHub 저장소(비공개)  ←→  메인PC  C:\Users\phj\Downloads\unifarm\app  (앱이 실제로 도는 곳)
   메인PC 는 1분마다(app_watch.ps1) 저장소에서 새 코드를 받아오고(pull), PC 에서 바뀐 파일은 올립니다(push).
   받아온 코드에 mushroom_app\*.py 가 있으면 20초 뒤 앱을 자동으로 다시 켭니다. 올린 뒤 2분 안에 반영됩니다.
