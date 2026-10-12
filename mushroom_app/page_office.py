@@ -563,6 +563,13 @@ def _tab_recon(D):
     pre = int((X["입금상태"].astype(str).str.startswith("팩스 전")).sum())
     est = int((X["입금상태"] == "입금 확인(추정)").sum())
     tot[2].caption((f"팩스 전 출하 {pre}건은 건별 대조 불가" if pre else "") + (" · " if pre and est else "") + (f"추정 확인 {est}건(정산서 없음, 경락액×수수료율)" if est else ""))
+    DMx = D.get("DEPM", pd.DataFrame())
+    if len(DMx) and (mk in ("전체", "대양청과")):                       # 대양청과는 경매가가 너무 낮으면 약속 단가와의 차액을 보전금으로 따로 줌 (v1.28.1)
+        ym = DMx[(DMx["시장"] == "대양청과") & (DMx["구분"] == "보전") & (DMx["일시"].dt.strftime("%Y-%m") == pick)]
+        if len(ym):
+            tr_ = ym[ym["짝"] == "운송 지원금"]["금액"]; bj = ym[ym["짝"] != "운송 지원금"]["금액"]
+            st.caption(f"대양청과 별도 입금({pick}): 재정산 보전금 {len(bj)}건 {bj.sum():,.0f}원 · 운송 지원금 {len(tr_)}건 {tr_.sum():,.0f}원 "
+                       "— 경매가가 약속 단가(장부 비고 '재정산')보다 낮으면 대양이 차액의 94%를 '대양보전'으로 보완, 2만 원짜리는 운송 지원금")
     tot[3].metric("명세표 금액", _eok(X["명세표"].sum()))
 
     # ② 확인할 거래 목록

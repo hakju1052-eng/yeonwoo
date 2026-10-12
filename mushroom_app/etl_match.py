@@ -697,3 +697,92 @@ def fill_by_ledger(U, DM, win=16, tol=0.012):
             elif U.at[i, "등급"] == "대기" and not rest:
                 U.at[i, "등급"] = "참고"
     return U, dm
+
+
+# ───────────────────────── 대양청과 재정산 보전금 (v1.28.1) ─────────────────────────
+def daeyang_bojeon(U, DM, win=10, tol=1000):
+    """대양청과는 경매가로 먼저 정산·입금하고, 장부 비고의 약속 단가(재정산)와의 차액 × 94% 를 '대양보전'으로 따로 입금한다.
+    2만 원짜리 '대양보전'은 운송 지원금. 출하일 줄에 보전기대·보전입금·보전일·보전상태를 붙이고, 입금 표의 짝을 채운다."""
+    from . import config as C
+    rate = getattr(C, "DAEYANG_BOJEON_RATE", 0.94)
+    tr = getattr(C, "DAEYANG_TRANSPORT_AMOUNT", 20000)
+    if U is None or U.empty or DM is None or DM.empty:
+        return U, DM
+    U = U.copy(); dm = DM.copy()
+    for c in ("보전기대", "보전입금"):
+        U[c] = np.nan
+    U["보전일"] = pd.NaT
+    U["보전상태"] = ""
+    isb = (dm["시장"] == "대양청과") & (dm["구분"] == "보전")
+    dm.loc[isb & ((dm["금액"] - tr).abs() < 1), "짝"] = "운송 지원금"
+    free = dm[isb & ((dm["금액"] - tr).abs() >= 1)].sort_values("일시")
+    used = set()
+    rows = U[(U["시장"] == "대양청과") & U["재정산"].astype(bool) & ((U["장부금액"].fillna(0) - U["경매금액"].fillna(0)) > tol)].sort_values("날짜")
+    last = dm["일시"].max()
+    exp = {i: round((U.at[i, "장부금액"] - U.at[i, "경매금액"]) * rate) for i in rows.index}
+    for i in rows.index:                     # ① 원 단위로 같은 입금
+        d0 = U.at[i, "날짜"]
+        c = free[(free["일시"] > d0) & (free["일시"] <= d0 + pd.Timedelta(days=win)) & ~free.index.isin(used)]
+        hit = c[(c["금액"] - exp[i]).abs() < 1]
+        if len(hit):
+            j = hit.index[0]; used.add(j)
+            U.at[i, "보전입금"], U.at[i, "보전일"], U.at[i, "보전상태"] = dm.at[j, "금액"], dm.at[j, "일시"], "일치"
+            dm.at[j, "짝"] = f"{d0:%m/%d} 출하 재정산 보전금"
+    for i in rows.index:                     # ② 남은 것 — 기간 안 가장 가까운 남은 보전 입금(금액이 다르면 차이로 보여 줌)
+        U.at[i, "보전기대"] = exp[i]
+        if U.at[i, "보전상태"]:
+            continue
+        d0 = U.at[i, "날짜"]
+        c = free[(free["일시"] > d0) & (free["일시"] <= d0 + pd.Timedelta(days=win)) & ~free.index.isin(used)]
+        if len(c):
+            j = (c["금액"] - exp[i]).abs().idxmin(); used.add(j)
+            U.at[i, "보전입금"], U.at[i, "보전일"], U.at[i, "보전상태"] = dm.at[j, "금액"], dm.at[j, "일시"], "금액 다름"
+            dm.at[j, "짝"] = f"{d0:%m/%d} 출하 재정산 보전금(금액 다름)"
+        else:
+            U.at[i, "보전상태"] = "아직 입금 전" if d0 + pd.Timedelta(days=win) > last else "못 찾음"
+    # ③ 짝이 없는 보전 입금 — 장부 비고에 재정산 표시가 없는 출하분일 수 있다(8/31 새송이 80박스: 9/2 보전 142,880 = 152,000×94% = 80×1,900원).
+    #    입금 10일 안 앞쪽 대양 출하일 중, 보전금÷94% 가 출고 박스 × 100원 단위로 나눠지는 가장 가까운 날에 붙인다.
+    extra = []
+    for j in free.index.difference(list(used)):
+        t, amt = dm.at[j, "일시"], dm.at[j, "금액"]
+        base = amt / rate
+        if abs(base - round(base, -2)) >= 1:
+            continue
+        cand = U[(U["시장"] == "대양청과") & (U["날짜"] < t.normalize()) & (U["날짜"] >= t - pd.Timedelta(days=win)) & (U["보전상태"] == "")
+                 & (U["출고박스"].fillna(0) > 0)].sort_values("날짜", ascending=False)
+        for i in cand.index:
+            per = round(base) / U.at[i, "출고박스"]
+            if abs(per - round(per, -2)) < 1e-6 and 0 < per <= 5000:
+                U.at[i, "보전입금"], U.at[i, "보전일"], U.at[i, "보전상태"] = amt, t, "장부에 재정산 없음"
+                U.at[i, "보전기대"] = np.nan
+                dm.at[j, "짝"] = f"{U.at[i, '날짜']:%m/%d} 출하 보전금(장부에 재정산 표시 없음)"
+                extra.append(i)
+                break
+    for i in extra:
+        base = round(U.at[i, "보전입금"] / rate)
+        msg = (f"장부에 재정산 표시 없이 보전금 {U.at[i, '보전입금']:,.0f}원 {U.at[i, '보전일']:%m/%d} 입금"
+               f"(차액 {base:,.0f} = {U.at[i, '출고박스']:,.0f}박스×{base / U.at[i, '출고박스']:,.0f}원) — 장부 비고 확인")
+        U.at[i, "문제"] = " · ".join([msg] + [x for x in str(U.at[i, "문제"] or "").split(" · ") if x])
+        if U.at[i, "등급"] == "정상":
+            U.at[i, "등급"] = "참고"
+    # 등급·문제 다시 쓰기
+    for i in rows.index:
+        st_, e_, g_ = U.at[i, "보전상태"], U.at[i, "보전기대"], U.at[i, "보전입금"]
+        diff = (U.at[i, "장부금액"] or 0) - (U.at[i, "경매금액"] or 0)
+        parts = [x for x in str(U.at[i, "문제"] or "").split(" · ") if x and "장부 금액이 시장 정산과 다름" not in x and not x.startswith("재정산")]
+        if st_ == "일치":
+            msg = f"재정산 보전금 {g_:,.0f}원 {U.at[i, '보전일']:%m/%d} 입금 확인(차액 {diff:,.0f}×94%)"
+            if U.at[i, "등급"] in ("참고", "확인") and not any(("못 찾음" in x) or ("확인 안 됨" in x) or ("금액 다름" in x) or ("팩스 없음" in x) for x in parts):
+                U.at[i, "등급"] = "정상" if not parts else U.at[i, "등급"]
+        elif st_ == "금액 다름":
+            msg = f"재정산 보전금 덜 들어옴(기대 {e_:,.0f} / 입금 {g_:,.0f}, {g_ - e_:+,.0f}원)"
+            U.at[i, "등급"] = "확인"
+        elif st_ == "아직 입금 전":
+            msg = f"재정산 보전금 {e_:,.0f}원 아직 입금 전"
+            if U.at[i, "등급"] in ("참고", "정상"):
+                U.at[i, "등급"] = "대기"
+        else:
+            msg = f"재정산 보전금 {e_:,.0f}원 입금 못 찾음"
+            U.at[i, "등급"] = "확인"
+        U.at[i, "문제"] = " · ".join([msg] + parts)
+    return U, dm

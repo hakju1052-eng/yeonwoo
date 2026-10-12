@@ -92,6 +92,7 @@ def compute():
         J0 = O.reconcile(MD, S, FX=FX if len(FX) else None)
         UN = etl_match.unified(J0, TW, ST, MD)
         UN, DEPM = etl_match.fill_by_ledger(UN, DEPM)            # 팩스 없는 날은 출고장 금액으로 입금 추정 (v1.26.10)
+        UN, DEPM = etl_match.daeyang_bojeon(UN, DEPM)            # 대양청과 재정산 보전금·운송 지원금 (v1.28.1)
     except Exception:
         UN = pd.DataFrame()
     try:                                     # 법인 (v1.28.0)
