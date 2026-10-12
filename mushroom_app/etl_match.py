@@ -26,6 +26,12 @@ def fax_lots(D, L):
     L = L.copy()
     L["_k"] = L["파일"] + "#" + L["장"].astype(str)
     D["_공제"] = D[["수수료", "운임", "기타공제"]].sum(axis=1, min_count=1).fillna(0)
+    Lg = {k: g for k, g in L.groupby("_k", sort=False)}          # 문서(파일#장)별 줄 — 묶음마다 전체 줄 표를 거르지 않는다 (v1.27.1)
+    _empty = L.iloc[0:0]
+
+    def lines_of(keys):
+        parts = [Lg[k] for k in keys if k in Lg]
+        return pd.concat(parts) if parts else _empty
     out = []
 
     def add(rows, crop, mk, day, sh, kind):
@@ -41,8 +47,8 @@ def fax_lots(D, L):
         S = u[u["문서"] == "정산서"]
         if len(S):
             S = S.sort_values("_공제", ascending=False).drop_duplicates(["수량", "금액"])
-        lw = L[L["_k"].isin(W["_k"])]
-        ls = L[L["_k"].isin(S["_k"])]
+        lw = lines_of(W["_k"])
+        ls = lines_of(S["_k"])
         if len(lw):
             add(lw, crop, mk, day, sh, "단가")
             if len(S):
@@ -484,16 +490,29 @@ def fill_by_ledger(U, DM, win=16, tol=0.012):
     dm = DM.copy()
     need = U[U["지급액"].isna() & (U["장부금액"].fillna(0) > 0) & (U["미정박스"].fillna(0) == 0)
              & ~U["입금상태"].isin(["입금 확인", "입금 확인(추정)"])].sort_values("날짜")
+    # 시장별로 '아직 짝 없는 일반 입금'만 미리 추려 두고(일시 순), 날짜 창은 이진 탐색 — 매번 전체 표를 거르지 않는다 (v1.27.1, 10초 → 0.1초)
+    free = dm[(dm["짝"] == "") & (dm["구분"] == "")]
+    pool = {}
+    for mk, g in free.groupby("시장"):
+        g = g.sort_values("일시")
+        pool[mk] = {"idx": g.index.to_numpy(), "t": g["일시"].to_numpy(), "a": g["금액"].to_numpy(dtype=float), "used": np.zeros(len(g), dtype=bool)}
     for i, r in need.iterrows():
         mk = r["시장"]
-        if mk not in rate:
+        if mk not in rate or mk not in pool:
             continue
         est = r["장부금액"] * (1 - rate[mk])
         d0 = r["날짜"]
-        c = dm[(dm["시장"] == mk) & (dm["짝"] == "") & (dm["구분"] == "") & (dm["일시"] > d0) & (dm["일시"] <= d0 + pd.Timedelta(days=win))]
-        hit = c[((c["금액"] - est).abs() / est) <= tol]
-        if len(hit):
-            j = hit.index[0]
+        P = pool[mk]
+        lo = np.searchsorted(P["t"], np.datetime64(d0), side="right")
+        hi = np.searchsorted(P["t"], np.datetime64(d0 + pd.Timedelta(days=win)), side="right")
+        if lo >= hi:
+            continue
+        seg = np.arange(lo, hi)
+        ok_ = seg[(~P["used"][lo:hi]) & (np.abs(P["a"][lo:hi] - est) / est <= tol)]
+        if len(ok_):
+            k = ok_[0]
+            P["used"][k] = True
+            j = P["idx"][k]
             dm.at[j, "짝"] = f"{d0:%m/%d} 출하 추정(팩스 없음, 장부액×수수료율)"
             U.at[i, "입금액"] = dm.at[j, "금액"]
             U.at[i, "지급액"] = dm.at[j, "금액"]

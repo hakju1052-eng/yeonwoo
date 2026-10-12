@@ -39,6 +39,13 @@ def main():
             print(f"팩스 판매원표: API 자동 읽기 꺼짐 - 읽은 {st_['done']}개, 남은 {st_['left']}개 (Claude 예약 작업이 읽음)")
     except Exception as e:
         print(f"팩스 판매원표: 건너뜀 ({e})")
+    t5 = time.time()
+    try:   # 경영 자료 묶음(3단 대조 등, 20초 걸림)을 미리 계산해 저장 → 화면에서는 바로 뜸 (v1.27.1)
+        from . import office_bundle
+        d = office_bundle.get(progress=lambda s: print("  " + s, flush=True))
+        print(f"경영 자료: {'저장본 그대로' if d.get('cached') else '다시 계산해 저장'} ({time.time()-t5:.0f}초)")
+    except Exception as e:
+        print(f"경영 자료: 건너뜀 ({e})")
 
 
 if __name__ == "__main__":

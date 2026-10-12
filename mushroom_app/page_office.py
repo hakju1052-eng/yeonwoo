@@ -48,50 +48,9 @@ def _delta(p):
 
 @st.cache_data(ttl=600, show_spinner="경리 자료 읽는 중…")
 def _load(ver):
-    M, pm = O.monthly_sales()
-    S, fs = O.statements()
-    I, pi = O.inout()
-    MP, pp = O.market_prices()
-    U, pu = O.utilities()
-    DY = O.daeyang_prices()
-    try:
-        MD = O.market_daily()
-    except Exception:
-        MD = pd.DataFrame()
-    try:                                     # 팩스 판매원표 (v1.26.0)
-        from . import etl_fax
-        FXD, FXL = etl_fax.load()
-        FX = etl_fax.daily(FXD)
-        FXS = etl_fax.status()
-    except Exception:
-        FXD, FXL, FX, FXS = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
-    try:                                     # 3단 대조: 일지 출고 → 경매 → 정산 (v1.26.2)
-        from . import etl_match
-        TW = etl_match.match(MD, FXD, FXL) if len(FXD) and "서명" in FXD else {}
-        ST = etl_match.settle(FXD)
-    except Exception as e:
-        TW, ST = {"_error": str(e)}, pd.DataFrame()
-    try:                                     # 통장 입금 (가계부 백업) → 정산 지급액 (v1.26.2)
-        from . import etl_bank
-        DEP, DEPSRC = etl_bank.load()
-        ST, DEPM = etl_match.deposits(ST, DEP)
-        EST, DEPM = etl_match.deposits_by_auction(FXD, ST, DEPM)        # 정산서 없는 날은 경락액으로 추정 (v1.26.6)
-        if len(EST):
-            ST = pd.concat([ST, EST], ignore_index=True).sort_values("날짜").reset_index(drop=True)
-    except Exception as e:
-        DEP, DEPSRC, DEPM = pd.DataFrame(), f"오류: {e}", pd.DataFrame()
-    try:
-        ME = O.monthly_extend(M, S)
-    except Exception:
-        ME = pd.DataFrame()
-    try:                                     # 출하일 한 줄 요약 (v1.26.5)
-        J0 = O.reconcile(MD, S, FX=FX if len(FX) else None)
-        UN = etl_match.unified(J0, TW, ST, MD)
-        UN, DEPM = etl_match.fill_by_ledger(UN, DEPM)            # 팩스 없는 날은 출고장 금액으로 입금 추정 (v1.26.10)
-    except Exception:
-        UN = pd.DataFrame()
-    used = [p for p in [pm, pi, pu] + list(pp) + list(fs) if p]
-    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used)
+    """경영 자료 묶음 — 계산은 office_bundle 이 하고 디스크에 저장해 두므로(서명이 같으면 1초 안) 여기서는 받아오기만 (v1.27.1)"""
+    from . import office_bundle
+    return office_bundle.get()
 
 
 def _err(df):
@@ -107,11 +66,13 @@ def render(ver, me):
     c1, c2 = st.columns([5, 1])
     c1.caption(f"경리(사무실) 자료를 모아 정리한 화면입니다 — 관리자만 보입니다. 원본 폴더: `{src}`"
                + (" (Z: 드라이브가 안 보여 사본을 읽는 중)" if not src.upper().startswith("Z:") else ""))
-    if c2.button("다시 읽기", key="of_reload", help="원본 파일을 지금 다시 읽습니다(평소에는 10분마다)."):
+    if c2.button("다시 읽기", key="of_reload", help="원본이 바뀌었는지 지금 확인합니다. 바뀐 게 없으면 저장본을 그대로 씁니다(1초). 바뀌었으면 다시 계산합니다(20초쯤)."):
         _load.clear(); st.rerun()
     if not os.path.isdir(src):
         st.warning("원본 폴더를 찾지 못했습니다. Z: 드라이브 연결을 확인하거나 Downloads\\SynologyDrive_문서_복사.bat 을 실행하세요."); return
     D = _load(ver)
+    if D.get("made"):
+        c1.caption(f"자료 계산 시각 {D['made']} ({D.get('secs', 0):.0f}초 걸림) — 원본이 바뀌면 갱신(09:00·15:00) 때 미리 다시 계산합니다.")
     tabs = st.tabs(["매출 현황", "거래처별", "시장 단가", "출하 대사", "매입·매출", "전기·수도", "자료 위치"])
     with tabs[0]:
         _tab_sales(D)
