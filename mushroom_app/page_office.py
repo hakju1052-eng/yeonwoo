@@ -638,6 +638,31 @@ NUMFMT = lambda cols: {c: st.column_config.NumberColumn(format="localized") for 
 EST_CSS = "color: #a0522d; text-decoration: underline dotted; font-style: italic"     # 정산서 없이 입금으로 추정한 값 표시
 
 
+def _with_total(T, label_col, sum_cols):
+    """표 맨 아래에 '합계' 줄 — sum_cols 만 더하고 나머지 칸은 빈칸. 빈칸이 'None'으로 안 보이게 숫자는 쉼표 넣은 글자로 바꾼다 (v1.28.2)"""
+    if T is None or T.empty:
+        return T
+    T = T.reset_index(drop=True).copy()
+    tot = {c: "" for c in T.columns}
+    for c in sum_cols:
+        tot[c] = pd.to_numeric(T[c], errors="coerce").sum()
+    tot[label_col] = "합계"
+    num = [c for c in T.columns if pd.api.types.is_numeric_dtype(T[c])]
+    rows = T.to_dict("records") + [tot]
+    out = pd.DataFrame(rows, columns=T.columns)
+    for c in out.columns:
+        if c in num:
+            out[c] = [("" if (v == "" or v is None or (isinstance(v, float) and np.isnan(v))) else f"{float(v):,.0f}") for v in out[c]]
+        else:
+            out[c] = ["" if v is None or (isinstance(v, float) and np.isnan(v)) else str(v) for v in out[c]]
+    return out
+
+
+def _bold_last(T):
+    n = len(T)
+    return T.style.apply(lambda r: ["font-weight: 700; background-color: rgba(42,120,214,0.12)" if r.name == n - 1 else "" for _ in r], axis=1)
+
+
 def _detail(D, X, Z, pick, crop):
     """고른 거래의 세부 — 일지 출고 줄 · 경매(팩스) 줄 · 팩스 문서 · 정산·입금 · 거래명세표 (v1.26.3, v1.26.5 정리)"""
     TW = D.get("TW") or {}
@@ -674,21 +699,23 @@ def _detail(D, X, Z, pick, crop):
                                    "경매일": [f"{d:%m/%d}" if pd.notna(d) else (e or "") for d, e in zip(G.get("예정경매일", pd.Series([pd.NaT] * len(G), index=G.index)), G["경매일"])],
                                    "팩스 확인 박스": G["경매박스"] + G["이월박스"] + G["합계확인박스"],
                                    "상태": [_line_state(r) for _, r in G.iterrows()], "비고": G["비고"]})
-                st.dataframe(T1, hide_index=True, **_FULL, column_config={**NUMFMT(["박스", "박스단가", "금액", "팩스 확인 박스"]), "상태": st.column_config.TextColumn(width="large")})
+                T1 = _with_total(T1, "품목", ["금액"])                     # 맨 아래 합계 줄 — 금액만 더함 (v1.28.2)
+                st.dataframe(_bold_last(T1), hide_index=True, **_FULL, column_config={"상태": st.column_config.TextColumn(width="large")})
         else:
             MD = D.get("MD", pd.DataFrame())
             G = MD[(MD["작물"] == crop1) & (MD["시장"] == mk) & (MD["날짜"] == d0)]
             if len(G):
                 st.caption("① 포장실 일지 출고")
-                st.dataframe(G[["품목", "박스", "박스단가", "금액", "비고"]], hide_index=True, **_FULL, column_config=NUMFMT(["박스", "박스단가", "금액"]))
+                T1 = _with_total(G[["품목", "박스", "박스단가", "금액", "비고"]].copy(), "품목", ["금액"])
+                st.dataframe(_bold_last(T1), hide_index=True, **_FULL)
         if "fax" in TW:
             F = TW["fax"]
             F = F[(F["작물"] == crop1) & (F["시장"] == mk) & win(F["판매일"])].copy()
             if len(F):
                 F["판매일"] = F["판매일"].dt.strftime("%m/%d")
                 st.caption("② 경매(팩스 판매원표·정산서 줄) — 짝: 장부 출고 줄과 맞춘 결과")
-                st.dataframe(F[["판매일", "출하자", "단가", "박스", "확인박스", "금액", "짝", "종류", "파일"]], hide_index=True, **_FULL,
-                             column_config=NUMFMT(["단가", "박스", "확인박스", "금액"]))
+                T2 = _with_total(F[["판매일", "출하자", "단가", "박스", "확인박스", "금액", "짝", "종류", "파일"]].copy(), "판매일", ["금액"])
+                st.dataframe(_bold_last(T2), hide_index=True, **_FULL)
             else:
                 st.warning("② 이 출하분의 경매 팩스가 스캔 폴더에 없습니다(그 뒤 5일 안).")
         FD = D.get("FXD", pd.DataFrame())
