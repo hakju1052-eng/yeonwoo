@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mushroom_app import config as C, etl_env, etl_logs, etl_retort, analysis as A, ai_chat, report as RP, auth, batch_report as BR
 import streamlit.components.v1 as components
 from mushroom_app import page_banagong as PB      # 반가공센터 현황 (v1.21.0)
-from mushroom_app import page_office as PO        # 경영 자료 — 경리 자료 정리, 관리자 전용 (v1.25.0)
+# 경영 자료(page_office)는 v1.29.0 부터 따로 띄운 앱(office_app.py, 포트 8502)에서 연다 — 필요할 때만 여기서 불러온다
 
 # Streamlit 1.47+ 는 use_container_width 대신 width="stretch" 를 쓴다 (구버전 호환)
 try:
@@ -2635,6 +2635,72 @@ def ai_dock(ver, me, page, crop):
         st.rerun()
 
 
+def _office_port():
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "office_port.txt")
+    try:
+        if os.path.exists(p):
+            return int(open(p).read().strip())
+    except Exception:
+        pass
+    return getattr(C, "OFFICE_PORT", 8502)
+
+
+def _lan_ip():
+    import socket
+    try:
+        s_ = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s_.connect(("10.255.255.255", 1))            # 실제로 보내지 않음 — 이 PC 의 사내망 주소만 알아낸다
+        ip = s_.getsockname()[0]
+        s_.close()
+        return ip
+    except Exception:
+        return "localhost"
+
+
+def _office_running(port):
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _office_page(v, me):
+    """경영 자료는 따로 띄운 앱(같은 PC, 다른 포트)으로 보낸다 (v1.29.0). 그 앱이 꺼져 있으면 여기서 그린다."""
+    if not getattr(C, "OFFICE_SEPARATE", True):
+        from mushroom_app import page_office as PO
+        PO.render(v, me); return
+    port = _office_port()
+    try:
+        hdr = st.context.headers or {}
+    except Exception:
+        hdr = {}
+    host = hdr.get("host", "")
+    outside = hdr.get("x-forwarded-proto", "") == "https" or (host and ":" not in host)   # 사이트 공개(https 터널)로 들어온 경우
+    name = _lan_ip() if (outside or not host) else host.rsplit(":", 1)[0]
+    url = f"http://{name}:{port}"
+    if not _office_running(port):
+        st.warning(f"경영 자료 전용 화면({url})이 아직 안 떠 있습니다 — 1~2분 안에 자동으로 켜집니다. 급하면 아래 버튼으로 여기서 엽니다(조금 느림).")
+        if st.button("여기서 경영 자료 열기", key="office_inline"):
+            st.session_state["_office_inline"] = True
+        if st.session_state.get("_office_inline"):
+            from mushroom_app import page_office as PO
+            PO.render(v, me)
+        return
+    st.title("경영 자료")
+    if outside:
+        st.info(f"경영 자료는 사내망에서만 열립니다: **{url}** (회사 PC·와이파이에서 접속)")
+    st.link_button(f"경영 자료 열기 → {url}", url, type="primary")
+    st.caption("경영 자료는 본 앱이 느려지지 않도록 따로 띄운 화면에서 엽니다. 계정·로그인은 같습니다. 돌아올 때는 그 화면 왼쪽 위 '← 통합관리 시스템으로'.")
+    if not outside and st.session_state.get("_office_jumped") != url:
+        st.session_state["_office_jumped"] = url           # 한 번만 자동으로 넘어간다(뒤로 오면 버튼으로)
+        components.html(f"""<script>
+          try {{ const a = window.parent.document.createElement('a'); a.href = {json.dumps(url)}; a.target = '_self';
+                 window.parent.document.body.appendChild(a); a.click(); }} catch (e) {{}}
+        </script>""", height=0)
+
+
 NAV_LAST = "반가공 현황"    # 왼쪽 메뉴 구분선 아래에 따로 두는 메뉴 (v1.21.1). 그 아래에 경영 자료(관리자만, v1.26.7)
 
 
@@ -2784,7 +2850,7 @@ def main():
     elif page == "원가":
         page_cost(v)
     elif page == "경영 자료":
-        PO.render(v, me)
+        _office_page(v, me)
     elif page == "재고 대사":
         page_stock(v)
     elif page == "이상 감시":

@@ -365,6 +365,18 @@ update_unifarm.bat 에 캐시 갱신을 붙이는 예
     앱이 꺼져 있어도 다시 켜고(부팅 직후 5분은 로그온 자동 시작에 맡김), RESTART_REQUEST.txt 를 만들어 두면 그때도 다시 켭니다.
   - 기록: watch_log.txt · 해제: schtasks /delete /tn "통합관리 앱 자동 재시작" /f
   - 주의: 일부러 stop_app.bat 으로 꺼 두어도 1분 안에 다시 켜집니다(오래 꺼 두려면 위 해제 명령 먼저).
+■ v1.29.0 — 경영 자료를 따로 띄운 화면(같은 PC, 포트 8502)으로 (2026-10-13)
+  - 사용자: 경영관리 부분만 따로 로딩할 수 있게 — 접속 주소는 같고 경영 자료 메뉴로 갈 때만 주소가 바뀌게(사내 IP 도 괜찮음).
+  - mushroom_app\office_app.py(새): 경영 자료만 있는 Streamlit 앱. serve_office.bat 이 포트 8502(office_port.txt 로 바꿀 수 있음)로 창 없이 띄움.
+    계정·로그인 유지 쿠키는 본 앱과 같음(쿠키는 포트와 상관없이 같은 주소면 공유) — 관리자만. 왼쪽 위 '← 통합관리 시스템으로'.
+  - 본 앱(8501)에서 '경영 자료'를 누르면 http://<같은 주소>:8502 로 자동으로 넘어감(+ 열기 버튼). 사이트 공개(https)로 들어온 경우엔
+    사내망 주소(http://192.168.x.x:8502)를 알려줌. 8502 가 꺼져 있으면 경고 + '여기서 열기'(예전처럼 본 앱 안에서).
+    본 앱은 page_office 를 더 이상 미리 불러오지 않음(가벼워짐).
+  - app_watch.ps1: 두 앱을 같이 관리 — 꺼져 있으면 켜고, 코드가 바뀌면 둘 다 다시 켬(stamp: app_started.stamp · office_started.stamp,
+    기록 watch_log.txt 에 app/office 로 구분). 경영 자료 앱 출력은 office_log.txt.
+  - allow_firewall.bat 에 8502 규칙 추가(다른 PC 에서 경영 자료를 열려면 한 번 실행, 관리자 확인 '예'), stop_app.bat 도 8502 까지 끔.
+  - config: OFFICE_SEPARATE=True(False 면 예전처럼 본 앱 안에서), OFFICE_PORT=8502, MAIN_PORT=8501.
+  - 파일: office_app.py(새) · app.py · config.py · serve_office.bat(새) · app_watch.ps1 · allow_firewall.bat · stop_app.bat · .gitignore
 ■ v1.28.2 — 출하 대사 세부내역 표에 합계 줄 (2026-10-12)
   - 사용자: 세부내역 금액 합산값도 같이(박스·박스단가는 빼고 금액만).
   - ① 포장실 일지 출고 표와 ② 경매 표 맨 아래에 '합계' 줄(금액만 더함, 굵게·옅은 파란 바탕). 빈칸이 'None'으로 안 보이게 숫자는 쉼표 넣은 글자로.

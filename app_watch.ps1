@@ -63,66 +63,65 @@ try {
         } finally { Pop-Location }
     }
 
-    $port = 8501
-    $pf = Join-Path $app 'app_port.txt'
-    if (Test-Path $pf) { $p = (Get-Content $pf -TotalCount 1).Trim(); if ($p -match '^\d+$') { $port = [int]$p } }
-
+    # ---- apps: main app (app_port.txt, default 8501) + management-data app (office_port.txt, default 8502) ----
     $files  = Get-ChildItem -Path (Join-Path $app 'mushroom_app') -Recurse -Filter *.py | Where-Object { $_.FullName -notmatch '__pycache__' }
     $newest = ($files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
     if (-not $newest) { exit }
-    $newTicks = $newest.Ticks
+    $asked = Test-Path $flag
+    $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+    $justBooted = ($boot -and ((Get-Date) - $boot).TotalMinutes -lt 5)
 
-    $listen = @(Get-NetTCPConnection -LocalPort $port -State Listen)
-    $running = $listen.Count -gt 0
-
-    if (Test-Path $stamp) {
-        $oldTicks = [int64]((Get-Content $stamp -TotalCount 1).Trim())
-    } else {
-        $oldTicks = 0                       # first run: restart once so the newest code is loaded
-        Log "first run"
+    function Get-Port($file, $default) {
+        $pf = Join-Path $app $file
+        if (Test-Path $pf) { $p = (Get-Content $pf -TotalCount 1).Trim(); if ($p -match '^\d+$') { return [int]$p } }
+        return $default
     }
-    # right after boot the logon task (start_app.vbs) starts the app - do not race it
-    if (-not $running) {
-        $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
-        if ($boot -and ((Get-Date) - $boot).TotalMinutes -lt 5) { exit }
+    $apps = @(@{ name = 'app';    port = (Get-Port 'app_port.txt' 8501);    bat = 'serve_app.bat';    stamp = 'app_started.stamp';    log = 'app_log.txt' })
+    if (Test-Path (Join-Path $app 'serve_office.bat')) {
+        $apps += @{ name = 'office'; port = (Get-Port 'office_port.txt' 8502); bat = 'serve_office.bat'; stamp = 'office_started.stamp'; log = 'office_log.txt' }
     }
 
-    $changed = $newTicks -gt $oldTicks
-    $asked   = Test-Path $flag
-    if (-not ($changed -or $asked -or -not $running)) { exit }
+    $settled = $false
+    foreach ($a in $apps) {
+        $port = $a.port
+        $stampF = Join-Path $app $a.stamp
+        $running = @(Get-NetTCPConnection -LocalPort $port -State Listen).Count -gt 0
+        if (Test-Path $stampF) { $oldTicks = [int64]((Get-Content $stampF -TotalCount 1).Trim()) } else { $oldTicks = 0; Log ($a.name + ' first run') }
+        # right after boot the logon task starts the main app - do not race it
+        if (-not $running -and $justBooted -and $a.name -eq 'app') { continue }
+        $changed = $newest.Ticks -gt $oldTicks
+        if (-not ($changed -or $asked -or -not $running)) { continue }
 
-    # wait until the update finished (no file written in the last 20 seconds)
-    if ($changed) {
-        $age = ((Get-Date).ToUniversalTime() - $newest).TotalSeconds
-        if ($age -lt 20) { Start-Sleep -Seconds ([int](21 - $age)) }
-        $files  = Get-ChildItem -Path (Join-Path $app 'mushroom_app') -Recurse -Filter *.py | Where-Object { $_.FullName -notmatch '__pycache__' }
-        $newTicks = ($files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc.Ticks
+        # wait until the update finished (no file written in the last 20 seconds) - once for all apps
+        if ($changed -and -not $settled) {
+            $age = ((Get-Date).ToUniversalTime() - $newest).TotalSeconds
+            if ($age -lt 20) { Start-Sleep -Seconds ([int](21 - $age)) }
+            $files  = Get-ChildItem -Path (Join-Path $app 'mushroom_app') -Recurse -Filter *.py | Where-Object { $_.FullName -notmatch '__pycache__' }
+            $newest = ($files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
+            $settled = $true
+        }
+
+        $why = @()
+        if ($changed) { $why += 'code updated' }
+        if ($asked)   { $why += 'restart requested' }
+        if (-not $running) { $why += 'not running' }
+
+        foreach ($c in @(Get-NetTCPConnection -LocalPort $port -State Listen)) {
+            Stop-Process -Id $c.OwningProcess -Force
+            Log ($a.name + ' stopped pid ' + $c.OwningProcess)
+        }
+        Start-Sleep -Seconds 3
+        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"' + (Join-Path $app $a.bat) + '"') -WorkingDirectory $app -WindowStyle Hidden
+        Set-Content -Path $stampF -Value $newest.Ticks
+
+        $ok = $false
+        for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            if (@(Get-NetTCPConnection -LocalPort $port -State Listen).Count -gt 0) { $ok = $true; break }
+        }
+        Log ($a.name + ' restart (' + ($why -join ', ') + ') -> ' + $(if ($ok) { 'running on port ' + $port } else { 'NOT running - see ' + $a.log }))
     }
-
-    $why = @()
-    if ($changed) { $why += 'code updated' }
-    if ($asked)   { $why += 'restart requested' }
-    if (-not $running) { $why += 'app was not running' }
-
-    # stop: every process listening on the app port (same as stop_app.bat)
-    foreach ($c in @(Get-NetTCPConnection -LocalPort $port -State Listen)) {
-        Stop-Process -Id $c.OwningProcess -Force
-        Log ("stopped pid " + $c.OwningProcess)
-    }
-    Start-Sleep -Seconds 3
-
-    # start hidden (same as start_app.vbs -> serve_app.bat)
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"' + (Join-Path $app 'serve_app.bat') + '"') -WorkingDirectory $app -WindowStyle Hidden
-    Set-Content -Path $stamp -Value $newTicks
     if ($asked) { Remove-Item $flag -Force }
-
-    # check it came up (up to 60 s)
-    $ok = $false
-    for ($i = 0; $i -lt 30; $i++) {
-        Start-Sleep -Seconds 2
-        if (@(Get-NetTCPConnection -LocalPort $port -State Listen).Count -gt 0) { $ok = $true; break }
-    }
-    Log ("restart (" + ($why -join ', ') + ") -> " + $(if ($ok) { 'running on port ' + $port } else { 'NOT running - see app_log.txt' }))
 }
 finally {
     Remove-Item $lock -Force

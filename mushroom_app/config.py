@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.28.2"
+VERSION = "1.29.0"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -28,6 +28,10 @@ ENTITY_CONFIRMED_SINCE = "2026-08-01"
 # 6% 를 뗀 금액을 '대양보전'으로 따로 입금(2026-09 8건 중 7건 원 단위 일치). 2만 원짜리 '대양보전'은 운송 지원금(경리 확인).
 DAEYANG_BOJEON_RATE = 0.94
 DAEYANG_TRANSPORT_AMOUNT = 20000
+# 경영 자료 따로 띄우기 (v1.29.0): 본 앱(8501)에서 '경영 자료'를 누르면 같은 PC 의 다른 포트(office_port.txt, 없으면 8502)로 넘어간다.
+OFFICE_SEPARATE = True
+OFFICE_PORT = 8502
+MAIN_PORT = 8501
 FAX_AUTO_API = False      # 갱신(etl_cli) 때 API 로 팩스를 읽을지. False 면 화면 버튼으로만 — 평소엔 Claude 예약 작업이 직접 읽는다 (v1.27.0)
 AI_KEY_NAMES = ["anthropic_key.txt", "claude_api_key.txt", "claude_api.txt", "cluade_api.txt"]
 SESSION_DAYS = 30                # 로그인 유지 기간(일). 0 으로 두면 유지 기능을 안 씀
