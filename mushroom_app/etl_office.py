@@ -331,6 +331,41 @@ def statement_files():
     return sorted(keep.values())
 
 
+def entity_of(crop, cust):
+    """(작물, 거래처·시장 이름) → 법인 (config.ENTITY_RULES 순서대로)"""
+    c = str(cust or "")
+    for ent, cr, names in getattr(C, "ENTITY_RULES", []):
+        if cr and cr != crop:
+            continue
+        if names and not any(n in c for n in names):
+            continue
+        return ent
+    return "기타"
+
+
+def add_entity(df, crop_col="작물", cust_col="거래처", date_col=None):
+    """법인 열과 법인추정(확인된 기간 전이면 True) 열을 붙인다"""
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    df["법인"] = [entity_of(a, b) for a, b in zip(df[crop_col], df[cust_col])]
+    since = pd.Timestamp(getattr(C, "ENTITY_CONFIRMED_SINCE", "2000-01-01"))
+    df["법인추정"] = (df[date_col] < since) if date_col and date_col in df else False
+    return df
+
+
+def entity_check(FXD):
+    """팩스 출하자와 규칙이 다른 문서 (시장·작물·출하자·규칙·건수·첫날·끝날) — 법인이 바뀌었으면 여기 나타난다"""
+    if FXD is None or FXD.empty or "출하자" not in FXD:
+        return pd.DataFrame()
+    X = FXD[FXD["출하자"].isin(["진성", "연우", "피어리스"])].copy()
+    X["규칙"] = [entity_of(a, b) for a, b in zip(X["작물"], X["시장"])]
+    X = X[X["규칙"] != X["출하자"]]
+    if X.empty:
+        return pd.DataFrame()
+    return X.groupby(["시장", "작물", "출하자", "규칙"]).agg(건수=("파일", "size"), 첫날=("날짜", "min"), 끝날=("날짜", "max")).reset_index()
+
+
 def statements():
     fs = statement_files()
     if any(f.lower().endswith(".xls") for f in fs):
@@ -345,6 +380,7 @@ def statements():
     D["연월"] = D["거래일"].dt.to_period("M").dt.to_timestamp()
     if "파일월" in D:                              # 파일이 없는 달의 조각(예: 5월 파일 첫날의 4/30 출하분)은 뺀다
         D = D[D["연월"].isin(set(D["파일월"].dropna()))]
+    D = add_entity(D, "작물", "거래처", "거래일")       # 법인 (v1.28.0)
     return D, fs
 
 

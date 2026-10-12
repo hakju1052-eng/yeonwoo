@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.27.4"
+VERSION = "1.28.0"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -13,6 +13,17 @@ AI_KEY_FILE = r""
 FAX_SINCE = "2026-08-01"
 FAX_MAX_PER_RUN = 60
 FAX_MODEL = ""
+# 법인 구분 (v1.28.0) — 위에서부터 처음 맞는 규칙. (법인, 작물 또는 None, 거래처·시장 이름에 들어갈 글자들 또는 None)
+# 시장 팩스의 출하자로 확인(2026-08~): 진성 = 팽이 전부 + 구리청과 새송이, 연우 = 서울·서부·대양·광주중앙 새송이, 피어리스 = 경인·인천 새송이.
+# 시장 아닌 거래처(직거래·온라인)는 작물로: 팽이 → 진성, 새송이 → 연우.  중간에 바뀐 적이 있어 ENTITY_CONFIRMED_SINCE 전 달은 '추정'으로 표시.
+ENTITY_RULES = [
+    ("피어리스", "새송이", ("경인농산", "인천농산물")),
+    ("진성", "새송이", ("구리청과",)),
+    ("진성", "팽이", None),
+    ("연우", "새송이", None),
+]
+ENTITY_ORDER = ["진성", "연우", "피어리스", "기타"]
+ENTITY_CONFIRMED_SINCE = "2026-08-01"
 FAX_AUTO_API = False      # 갱신(etl_cli) 때 API 로 팩스를 읽을지. False 면 화면 버튼으로만 — 평소엔 Claude 예약 작업이 직접 읽는다 (v1.27.0)
 AI_KEY_NAMES = ["anthropic_key.txt", "claude_api_key.txt", "claude_api.txt", "cluade_api.txt"]
 SESSION_DAYS = 30                # 로그인 유지 기간(일). 0 으로 두면 유지 기능을 안 씀

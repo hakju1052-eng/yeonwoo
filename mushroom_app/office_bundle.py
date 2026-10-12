@@ -94,8 +94,13 @@ def compute():
         UN, DEPM = etl_match.fill_by_ledger(UN, DEPM)            # 팩스 없는 날은 출고장 금액으로 입금 추정 (v1.26.10)
     except Exception:
         UN = pd.DataFrame()
+    try:                                     # 법인 (v1.28.0)
+        UN = O.add_entity(UN, "작물", "시장", "날짜")
+        ENTCHK = O.entity_check(FXD)
+    except Exception:
+        ENTCHK = pd.DataFrame()
     used = [p for p in [pm, pi, pu] + list(pp) + list(fs) if p]
-    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used, SBF=SBF,
+    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used, SBF=SBF, ENTCHK=ENTCHK,
                 made=time.strftime("%Y-%m-%d %H:%M:%S"), secs=round(time.time() - t0, 1))
 
 

@@ -137,6 +137,7 @@ def _tab_sales(D):
                                                                     alt.Tooltip("kg당단가:Q", format=",.0f", title="kg당 단가")])).properties(height=220), **_FULL)
         col.altair_chart((base.mark_line(point=True, strokeDash=[4, 2]).encode(y=alt.Y("kg당단가:Q", title="kg당 매출단가(원)", scale=alt.Scale(zero=False)),
                                                                                tooltip=["연도:N", "월:O", alt.Tooltip("kg당단가:Q", format=",.0f")])).properties(height=160), **_FULL)
+    _entity_sales(D, this_m)
     T = X.pivot_table(index="연월", columns="작물", values=["물량kg", "박스", "매출", "kg당단가"], aggfunc="sum").sort_index(ascending=False)
     kind = X.groupby("연월")["잠정"].any().map({True: "잠정(명세표+일지)", False: "월별 표"})
     kind[kind.index >= this_m] = "진행 중"
@@ -155,20 +156,73 @@ def _tab_sales(D):
                "'거래명세표 합계'는 거래내역 카톡 폴더의 매출 거래명세표를 달별로 더한 값으로, 두 값이 크게 다르면 어느 한쪽 입력을 확인하세요.")
 
 
+ENT_COLOR = alt.Scale(domain=["진성", "연우", "피어리스", "기타"], range=["#2a78d6", "#1baf7a", "#8e5cd9", "#8a8f84"])
+
+
+def _entity_note():
+    since = pd.Timestamp(getattr(O.C, "ENTITY_CONFIRMED_SINCE", "2026-08-01"))
+    return (f"법인은 거래처(시장)와 작물로 나눔 — 진성 = 팽이 전부 + 구리청과 새송이, 연우 = 그 밖의 새송이(서울·서부·대양·광주중앙·직거래 등), "
+            f"피어리스 = 경인농산·인천농산물 새송이. 시장 팩스 출하자로 확인된 {since:%Y-%m}부터는 확정, 그 전 달은 같은 규칙으로 나눈 추정(중간에 바뀐 적이 있음). "
+            "규칙은 config.py 의 ENTITY_RULES.")
+
+
+def _entity_sales(D, this_m):
+    """매출 현황 안 — 법인별 월 매출 (경리나라 거래명세표 공급가액 기준, v1.28.0)"""
+    S = D.get("S", pd.DataFrame())
+    if S is None or S.empty or _err(S) or "법인" not in S:
+        return
+    since = pd.Timestamp(getattr(O.C, "ENTITY_CONFIRMED_SINCE", "2026-08-01"))
+    st.markdown("**법인별 매출** (거래명세표 공급가액 기준)")
+    G = S.groupby(["연월", "법인"])["공급가액"].sum().reset_index()
+    Y = int(G[G["연월"] < this_m]["연월"].dt.year.max())
+    cur = G[(G["연월"].dt.year == Y) & (G["연월"] < this_m)]
+    last_m = int(cur["연월"].dt.month.max()) if len(cur) else 12
+    prev = G[(G["연월"].dt.year == Y - 1) & (G["연월"].dt.month <= last_m)]
+    ents = [e for e in getattr(O.C, "ENTITY_ORDER", ["진성", "연우", "피어리스", "기타"]) if e in set(G["법인"])]
+    cols = st.columns(len(ents))
+    for col, e in zip(cols, ents):
+        a, b = cur[cur["법인"] == e]["공급가액"].sum(), prev[prev["법인"] == e]["공급가액"].sum()
+        col.metric(f"{e} {Y}년 1~{last_m}월", _eok(a), _delta(_pct(a, b)))
+    Z = G[G["연월"] < this_m].copy()
+    Z["구분"] = np.where(Z["연월"] < since, "추정", "확정")
+    st.altair_chart(alt.Chart(_ym(Z)).mark_bar().encode(
+        x=alt.X("월표시:O", title=None), y=alt.Y("공급가액:Q", title="매출(원)", axis=EOK),
+        color=alt.Color("법인:N", scale=ENT_COLOR, sort=ents, legend=alt.Legend(orient="top", title=None)),
+        opacity=alt.Opacity("구분:N", scale=alt.Scale(domain=["추정", "확정"], range=[0.55, 1.0]), legend=alt.Legend(orient="top", title=None)),
+        tooltip=[alt.Tooltip("월표시:O", title="월"), "법인:N", alt.Tooltip("공급가액:Q", format=",.0f"), "구분:N"]).properties(height=240), **_FULL)
+    T = G.pivot_table(index="연월", columns="법인", values="공급가액", aggfunc="sum").reindex(columns=ents).sort_index(ascending=False)
+    T["합계"] = T.sum(axis=1)
+    T["구분"] = np.where(T.index < since, "추정", "확정")
+    T.loc[T.index >= this_m, "구분"] = "진행 중"
+    T.index = T.index.strftime("%Y-%m")
+    num = ents + ["합계"]
+    T[num] = T[num].round(0)
+    with st.expander("법인별 월 매출 표"):
+        st.dataframe(T, **_FULL, height=300, column_config={c: st.column_config.NumberColumn(format="localized") for c in num})
+    st.caption(_entity_note())
+    chk = D.get("ENTCHK", pd.DataFrame())
+    if isinstance(chk, pd.DataFrame) and len(chk):
+        st.warning("시장 팩스의 출하자가 규칙과 다른 문서가 있습니다 — 그 기간에 법인이 바뀌었을 수 있습니다: "
+                   + "; ".join(f"{r.시장} {r.작물} {r.첫날:%m/%d}~{r.끝날:%m/%d} 출하자 {r.출하자}(규칙 {r.규칙}) {r.건수}건" for r in chk.itertuples()))
+
+
 # ───────────────────────── 거래처별 ─────────────────────────
 def _tab_customers(D):
     S = D["S"]
     if S.empty or _err(S):
         st.info(S["_error"].iloc[0] if _err(S) else "거래내역 카톡 폴더에서 매출 거래명세표를 찾지 못했습니다."); return
     last = S["연월"].max()
-    c1, c2, c3 = st.columns([1.3, 1, 2])
+    c1, c2, c4, c3 = st.columns([1.2, 1, 1.4, 1.8])
     span = c1.selectbox("기간", ["최근 3개월", "최근 12개월", f"{last.year}년", "전체"], key="of_span")
     crop = c2.radio("작물", ["전체", "팽이", "새송이"], horizontal=True, key="of_crop")
+    ent = c4.radio("법인", ["전체", "진성", "연우", "피어리스"], horizontal=True, key="of_ent") if "법인" in S else "전체"
     chs = c3.multiselect("판매 경로", ["도매시장", "직거래·납품", "온라인"], default=["도매시장", "직거래·납품", "온라인"], key="of_ch")
     d0 = {"최근 3개월": last - pd.DateOffset(months=2), "최근 12개월": last - pd.DateOffset(months=11), f"{last.year}년": pd.Timestamp(last.year, 1, 1)}.get(span, S["연월"].min())
     X = S[(S["연월"] >= d0) & S["채널"].isin(chs)]
     if crop != "전체":
         X = X[X["작물"] == crop]
+    if ent != "전체":
+        X = X[X["법인"] == ent]
     if X.empty:
         st.info("조건에 맞는 거래가 없습니다."); return
     tot = X["공급가액"].sum()
@@ -179,6 +233,7 @@ def _tab_customers(D):
         col.metric(f"{ch} 비중", f"{100 * v / tot:.1f}%" if tot else "—"); col.caption(_eok(v))
     k[4].metric("거래처 수", f"{X['거래처'].nunique()}곳"); k[4].caption(f"거래 {len(X):,}건")
     G = X.groupby(["거래처", "채널"]).agg(매출=("공급가액", "sum"), 건수=("공급가액", "size"), 첫거래=("거래일", "min"), 마지막=("거래일", "max"),
+                                         법인=("법인", lambda s: "·".join(sorted(set(s)))) if "법인" in X else ("거래처", "first"),
                                          팽이=("공급가액", lambda s: s[X.loc[s.index, "작물"] == "팽이"].sum()),
                                          새송이=("공급가액", lambda s: s[X.loc[s.index, "작물"] == "새송이"].sum())).reset_index().sort_values("매출", ascending=False)
     G["비중%"] = (100 * G["매출"] / tot).round(1)
@@ -196,7 +251,7 @@ def _tab_customers(D):
         color=alt.Color("채널:N", scale=CH_COLOR, legend=alt.Legend(orient="top", title=None)),
         tooltip=[alt.Tooltip("월표시:O", title="월"), "채널:N", alt.Tooltip("공급가액:Q", format=",.0f")]).properties(height=380), **_FULL)
     show = G.assign(첫거래=G["첫거래"].dt.strftime("%Y-%m-%d"), 마지막=G["마지막"].dt.strftime("%Y-%m-%d"))
-    st.dataframe(show[["거래처", "채널", "매출", "비중%", "팽이", "새송이", "건수", "첫거래", "마지막"]], hide_index=True, **_FULL, height=320,
+    st.dataframe(show[["거래처", "채널", "법인", "매출", "비중%", "팽이", "새송이", "건수", "첫거래", "마지막"]], hide_index=True, **_FULL, height=320,
                  column_config={c: st.column_config.NumberColumn(format="localized") for c in ("매출", "팽이", "새송이", "건수")})
     st.markdown("**거래처 한 곳 자세히**")
     who = st.selectbox("거래처", G["거래처"].tolist(), key="of_who")
@@ -476,12 +531,15 @@ def _tab_recon(D):
     U = _apply_manual(U)
     U = U.copy(); U["월"] = U["날짜"].dt.strftime("%Y-%m")
     months = sorted(U["월"].unique(), reverse=True)
-    c1, c2, c3 = st.columns([1.3, 1, 1.7])
+    c1, c2, c4, c3 = st.columns([1.2, 1, 1.4, 1.6])
     pick = c1.selectbox("달", months, index=0, key="rc_month")
     crop = c2.radio("작물", ["전체", "팽이", "새송이"], horizontal=True, key="rc_crop")
+    ent = c4.radio("법인", ["전체", "진성", "연우", "피어리스"], horizontal=True, key="rc_ent") if "법인" in U else "전체"
     X = U[U["월"] == pick]
     if crop != "전체":
         X = X[X["작물"] == crop]
+    if ent != "전체":
+        X = X[X["법인"] == ent]
     mk_opts = ["전체"] + sorted(X["시장"].unique())
     mk = c3.selectbox("시장", mk_opts, index=0, key="rc_mk")
     if mk != "전체":
@@ -744,6 +802,18 @@ def _tab_inout(D):
     st.dataframe(T, hide_index=True, **_FULL, height=330, column_config={c: st.column_config.NumberColumn(format="localized") for c in T.columns[2:]})
     st.caption("자료: YYYY년 매입매출.xlsx '매입매출' 시트 (세금계산서·계산서 공급가액 합계). 인건비·감가상각 등이 빠져 있어 '매출−매입'은 손익이 아니라 거래 흐름 확인용입니다. "
                "경리가 아직 채우지 않은 달은 나오지 않습니다.")
+    S = D.get("S", pd.DataFrame())
+    if not any("피어리스" in str(e) for e in ents):
+        st.info("**피어리스** 칸이 매입매출.xlsx 에 없습니다. 경리가 같은 시트에 연우본점·진성처럼 '피어리스' 칸(매출·매입(과세)·매입(면세))을 만들면 다음 갱신 때 자동으로 들어옵니다. "
+                "그 전까지는 아래 거래명세표 기준 매출로 봐 주세요.")
+    if S is not None and len(S) and not _err(S) and "법인" in S:
+        G = S[S["연월"] >= ym0].pivot_table(index="연월", columns="법인", values="공급가액", aggfunc="sum")
+        ents2 = [e for e in getattr(O.C, "ENTITY_ORDER", []) if e in G]
+        G = G.reindex(columns=ents2).sort_index(ascending=False)
+        G.index = G.index.strftime("%Y-%m")
+        st.markdown("**법인별 매출 — 경리나라 거래명세표 기준** (세금계산서 합계와 다를 수 있음)")
+        st.dataframe(G.round(0), **_FULL, height=260, column_config={c: st.column_config.NumberColumn(format="localized") for c in ents2})
+        st.caption(_entity_note())
 
 
 # ───────────────────────── 전기·수도 ─────────────────────────
