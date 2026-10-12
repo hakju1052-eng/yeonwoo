@@ -126,6 +126,31 @@ def match(MD, D, L):
                     t = min(need, left[i])
                     if t > 0:
                         take(i, j, t, sale, "경매박스"); need -= t
+            # ①-2 단위가 다른 줄: 장부 '미니 24박스 12,000원'이 시장에선 '2kg 비포 96개 3,000원'(한 박스 = k개) — 단가가 1/k 이고
+            #     개수가 k배인 줄들을 모아 금액으로 맞춘다 (서부청과 새송이, v1.27.3)
+            for i in [i for i in priced.index if priced.at[i, "날짜"] == sd and left[i] > 0.5 and pd.isna(priced.at[i, "예정경매일"])]:
+                p_ = round(gi.at[i, "박스단가"])
+                for k in range(2, 11):
+                    if p_ % k:
+                        continue
+                    cand_j = [j for j in unit.index if abs(F.at[j, "단가"] - p_ / k) < 1 and F.at[j, "박스"] - F.at[j, "확인박스"] > 0.5]
+                    avail = sum(F.at[j, "박스"] - F.at[j, "확인박스"] for j in cand_j)
+                    need_u = left[i] * k
+                    if not cand_j or avail + 0.5 < need_u:
+                        continue
+                    for j in cand_j:
+                        if need_u <= 0.5:
+                            break
+                        t = min(need_u, F.at[j, "박스"] - F.at[j, "확인박스"])
+                        if t > 0:
+                            left[i] -= t / k
+                            F.at[j, "확인박스"] += t
+                            G.at[i, "경매박스"] += t / k
+                            G.at[i, "경매금액"] += t * F.at[j, "단가"]
+                            G.at[i, "경매일"] = _add_day(G.at[i, "경매일"], sale)
+                            F.at[j, "짝"] = f"단위 다름(1박스={k}개) 일치"
+                            need_u -= t
+                    break
             cand = [i for i in gi.index if gi.at[i, "날짜"] == sd and left[i] > 0.5]   # ②
             rest = fd[fd["박스"] - F.loc[fd.index, "확인박스"] > 0.5]
             sumonly = rest[rest["종류"] == "합계만"]
@@ -160,7 +185,8 @@ def match(MD, D, L):
                     t = min(need, left[i])
                     if t > 0:
                         take(i, j, t, sale, "이월박스"); need -= t
-                F.at[j, "짝"] = "단가 일치" if need <= 0.5 else ("일부" if need < r["박스"] else "")
+                if not str(F.at[j, "짝"]).startswith("단위 다름"):
+                    F.at[j, "짝"] = "단가 일치" if need <= 0.5 else ("일부" if need < r["박스"] else "")
         # ④ 그래도 남은 합계만 묶음(단가 없는 정산서)은 1~4일 전 출하의 남은 박스에 먼저 출하한 것부터 박스 수만큼 붙인다
         for j, r in F[(F["작물"] == crop) & (F["시장"] == mk) & (F["종류"] == "합계만")].iterrows():
             need = r["박스"] - F.at[j, "확인박스"]
