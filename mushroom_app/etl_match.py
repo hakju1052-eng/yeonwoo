@@ -374,31 +374,64 @@ def deposits(ST, DEP, win=15):
 
 
 def deposits_by_auction(FXD, ST, DM, win=15, tol=0.012):
-    """정산서는 없고 판매원표만 온 날 — 경락 합계 × (1 − 그 시장 평균 수수료율)이 남은 입금과 ±1.2% 안에서 맞으면 '추정 확인'.
-    반환: 정산 표에 추가할 줄 [시장, 날짜(판매일), 출하자, 작물, 판매대금, 수수료(추정), 지급액(추정), 입금액, 입금일, 입금대조='추정 확인', 파일], 입금 표 갱신"""
+    """정산서는 없고 판매원표(또는 서부청과 엑셀)만 있는 판매일 — 통장 입금으로 지급액을 추정한다 (v1.26.6, v1.27.4 운임 고려).
+    입금 = 경락 합계 × (1 − 수수료율) − 운임·하역비.  그 시장에서 정산서와 입금이 맞은 건들로 수수료율 범위(최소~최대)와
+    운임 최대치를 배우고, 15일 안의 남은 입금 가운데 '수수료율이 범위 안이고 운임이 0~최대치(천 원 단위)'로 설명되는 것이
+    있으면 그 입금을 쓴다('추정 확인'). 여럿이면 가장 이른 것(시장은 보통 다음 날 입금).
+    반환: 정산 표에 추가할 줄 [시장, 날짜(판매일), 출하자, 작물, 판매대금, 수수료(추정), 운임(추정), 지급액, 입금액, 입금일, 입금대조, 파일], 입금 표 갱신"""
     if FXD is None or FXD.empty or ST is None or ST.empty or DM is None or DM.empty:
         return pd.DataFrame(), DM
-    ok = ST[ST["입금대조"].isin(["일치", "나눠 입금"])]
-    rate = (1 - ok.groupby("시장")["지급액"].sum() / ok.groupby("시장")["판매대금"].sum()).to_dict()
+    ok = ST[ST["입금대조"].isin(["일치", "나눠 입금"]) & (ST["판매대금"] > 0)].copy()
+    if ok.empty:
+        return pd.DataFrame(), DM
+    ok["_r"] = ok["수수료"].fillna(0) / ok["판매대금"]
+    ok["_f"] = ok["운임"].fillna(0) + ok["기타공제"].fillna(0)
+    stat = {}
+    for mk, g in ok.groupby("시장"):
+        r = g["_r"]
+        stat[mk] = {"lo": max(0.0, r.quantile(0.05) - 0.002), "hi": r.quantile(0.95) + 0.002, "mean": r.mean(),
+                    "fmax": float(g["_f"].max()) * 1.2 + 10000, "fmed": float(g["_f"].median())}
     W = FXD[FXD["문서"] == "판매원표"]
     have = set(zip(ST["시장"], ST["날짜"], ST["작물"]))
     dm = DM.copy()
     rows = []
     for (mk, d, crop), g in W.groupby(["시장", "날짜", "작물"]):
-        if (mk, d, crop) in have or mk not in rate:
+        if (mk, d, crop) in have or mk not in stat:
             continue
         gross = g.drop_duplicates("서명")["금액"].sum() if "서명" in g else g["금액"].sum()
         if not gross:
             continue
-        est = gross * (1 - rate[mk])
+        st_ = stat[mk]
         c = dm[(dm["시장"] == mk) & (dm["짝"] == "") & (dm["구분"] == "") & (dm["일시"] >= d) & (dm["일시"] <= d + pd.Timedelta(days=win))]
-        hit = c[((c["금액"] - est).abs() / est) <= tol]
-        if len(hit):
-            j = hit.index[0]
-            dm.at[j, "짝"] = f"{d:%m/%d} 경락 추정(정산서 없음)"
-            rows.append({"시장": mk, "날짜": d, "출하자": "·".join(sorted(set(g["출하자"]))), "작물": crop, "판매대금": gross, "수수료": gross - dm.at[j, "금액"],
-                         "운임": np.nan, "기타공제": np.nan, "지급액": dm.at[j, "금액"], "입금액": dm.at[j, "금액"], "입금일": dm.at[j, "일시"],
-                         "입금대조": "추정 확인", "파일": ", ".join(sorted(set(g["파일"]))), "묶음": f"est|{mk}|{d:%Y%m%d}|{crop}"})
+        if c.empty:
+            continue
+        ded = gross - c["금액"]                                   # 공제 합 = 수수료 + 운임
+        # 운임 f(0 ~ fmax, 천 원 단위) 를 빼고 남은 수수료율이 범위 안인가 — 맞는 입금이 여럿이면 가장 이른 것(시장은 보통 다음 날 입금)
+        best, best_gap = None, None
+        for j in c.sort_values("일시").index:
+            dd = ded.at[j]
+            if dd < 0:
+                continue
+            fee_lo, fee_hi = dd - st_["fmax"], dd                 # f 가 0~fmax 일 때 수수료 범위
+            r_lo, r_hi = fee_lo / gross, fee_hi / gross
+            if r_hi < st_["lo"] or r_lo > st_["hi"]:
+                continue
+            # 수수료율 평균에 가장 가까운 f(천 원 단위)
+            f = round((dd - st_["mean"] * gross) / 1000) * 1000
+            f = min(max(f, 0), st_["fmax"])
+            fee = dd - f
+            gap = abs(fee / gross - st_["mean"])
+            if fee / gross < st_["lo"] - 1e-9 or fee / gross > st_["hi"] + 1e-9:
+                continue
+            best, best_gap, best_f = j, gap, f
+            break
+        if best is None:
+            continue
+        j = best
+        dm.at[j, "짝"] = f"{d:%m/%d} 경락 추정(정산서 없음)"
+        rows.append({"시장": mk, "날짜": d, "출하자": "·".join(sorted(set(g["출하자"]))), "작물": crop, "판매대금": gross,
+                     "수수료": gross - dm.at[j, "금액"] - best_f, "운임": best_f, "기타공제": np.nan, "지급액": dm.at[j, "금액"], "입금액": dm.at[j, "금액"],
+                     "입금일": dm.at[j, "일시"], "입금대조": "추정 확인", "파일": ", ".join(sorted(set(g["파일"]))), "묶음": f"est|{mk}|{d:%Y%m%d}|{crop}"})
     return pd.DataFrame(rows), dm
 
 
@@ -407,6 +440,41 @@ def _ship_of(sale, crop, mk, MD):
     """판매일 → 그 경매에 나간 출하일(그 시장 바로 앞 출고일, 4일 안). 없으면 판매일 하루 전."""
     m = MD[(MD["작물"] == crop) & (MD["시장"] == mk) & (MD["날짜"] < sale) & (MD["날짜"] >= sale - pd.Timedelta(days=4))]["날짜"]
     return m.max() if len(m) else sale - pd.Timedelta(days=1)
+
+
+def _share_settlements(U, st_, tol=1000):
+    """한 정산서가 이틀 출하분을 합쳐 정산한 경우(대전중앙 9/19 정산서 120박스 = 9/17 60 + 9/18 60) — 정산서는 뒤 출하일에만 붙고
+    앞 출하일은 '정산서 없음'으로 남는다. 정산서 판매대금이 붙은 출하일의 경매금액보다 크고, 같은 경매일에 나간 다른 출하일(정산 없음)의
+    경매금액을 더하면 맞으면 지급액·입금액을 경매금액 비율로 나눠 준다 → 입금상태 '입금 확인(합산 정산)' (v1.27.4)"""
+    if U is None or U.empty or "경매일" not in U or "입금상태" not in U:
+        return U
+    for _, r in st_.iterrows():
+        if r["입금대조"] not in ("일치", "나눠 입금") or pd.isna(r["판매대금"]) or not r["판매대금"]:
+            continue
+        m0 = (U["작물"] == r["작물"]) & (U["시장"] == r["시장"]) & (U["날짜"] == r["출하일"])
+        if not m0.any():
+            continue
+        i0 = U.index[m0][0]
+        a0 = U.at[i0, "경매금액"] if pd.notna(U.at[i0, "경매금액"]) else 0
+        if r["판매대금"] <= a0 + tol:
+            continue
+        sd = f"{r['날짜']:%m/%d}"
+        others = U[(U["작물"] == r["작물"]) & (U["시장"] == r["시장"]) & (U["날짜"] < r["출하일"]) & (U["날짜"] >= r["출하일"] - pd.Timedelta(days=4))
+                   & (U["입금상태"].fillna("") == "") & U["경매일"].astype(str).str.contains(sd) & U["경매금액"].fillna(0).gt(0)]
+        if others.empty:
+            continue
+        tot = a0 + others["경매금액"].sum()
+        if abs(tot - r["판매대금"]) > max(tol, r["판매대금"] * 0.01):
+            continue
+        pay, dep = r["지급액"], r["입금액"]
+        for i in list(others.index) + [i0]:
+            w = (U.at[i, "경매금액"] or 0) / tot
+            U.at[i, "판매대금"] = round(r["판매대금"] * w)
+            U.at[i, "수수료"] = round((r["수수료"] or 0) * w) if pd.notna(r["수수료"]) else np.nan
+            U.at[i, "지급액"] = round(pay * w) if pd.notna(pay) else np.nan
+            U.at[i, "입금액"] = round(dep * w) if pd.notna(dep) else np.nan
+            U.at[i, "입금상태"] = "입금 확인(합산 정산)"
+    return U
 
 
 def unified(J, TW, ST, MD, tol=1000):
@@ -441,6 +509,7 @@ def unified(J, TW, ST, MD, tol=1000):
                                                      입금액=("입금액", s1), _r=("_r", "max")).reset_index().rename(columns={"출하일": "날짜"})
         g["입금상태"] = g["_r"].map({3: "입금 못 찾음", 2: "아직 입금 전", 1: "입금 확인", 0.7: "입금 확인(운송비 차감)", 0.5: "입금 확인(추정)", 0: ""})
         U = U.merge(g.drop(columns="_r"), on=keys, how="left")
+        U = _share_settlements(U, st_, tol)
     for c in ("출고박스", "장부박스", "장부금액", "미정박스", "명세표", "확인박스", "미확인박스", "경매금액", "판매대금", "수수료", "지급액", "입금액"):
         if c not in U:
             U[c] = np.nan
@@ -489,6 +558,8 @@ def unified(J, TW, ST, MD, tol=1000):
             wait.append("아직 입금 전")
         elif d == "입금 확인(추정)":
             ref.append("정산서 없음 — 경락액×평소 수수료율로 입금 확인")
+        elif d == "입금 확인(합산 정산)":
+            ref.append("이틀 출하분을 한 정산서로 정산 — 경매금액 비율로 나눔")
         elif d == "입금 확인(운송비 차감)":
             ref.append(f"본정산 없이 가정산만 옴 — 지급액에서 운송비 {((r['지급액'] or 0) - (r['입금액'] or 0)):,.0f}원을 뺀 입금 확인")
         elif d == "정산서 없음" and f not in ("팩스 없음", "넘긴 경매 팩스 없음"):
@@ -522,6 +593,9 @@ def unified(J, TW, ST, MD, tol=1000):
         return "정상", ""
     for c in ("판매대금", "수수료", "지급액", "입금액", "경매금액"):
         U[c] = U[c].round(0)
+    # 장부 출고도, 경매도, 정산도 없는 빈 줄(팩스 판매일을 출하일로 옮기다 생긴 자리)은 뺀다 (v1.27.4)
+    ghost = (U["출고박스"].fillna(0) == 0) & (U["장부금액"].fillna(0) == 0) & (U["경매금액"].fillna(0) == 0) & U["지급액"].isna() & (U["명세표"].fillna(0) == 0)
+    U = U[~ghost].copy()
     out = U.apply(judge, axis=1, result_type="expand")
     U["등급"], U["문제"] = out[0], out[1]
     U = _offset_pairs(U)
@@ -564,8 +638,13 @@ def fill_by_ledger(U, DM, win=16, tol=0.012):
     if U is None or U.empty or DM is None or DM.empty:
         return U, DM
     ok = U[U["입금상태"] == "입금 확인"]
-    ok = ok[ok["판매대금"].notna() & ok["지급액"].notna() & (ok["판매대금"] > 0)]
+    ok = ok[ok["판매대금"].notna() & ok["지급액"].notna() & (ok["판매대금"] > 0)].copy()
     rate = (1 - ok.groupby("시장")["지급액"].sum() / ok.groupby("시장")["판매대금"].sum()).to_dict()
+    # 시장별 수수료율 범위·운임 최대치 (v1.27.4: 운임이 날마다 달라 ±1.2% 로는 못 맞추던 서부·인천·경인도 맞춘다)
+    ok["_r"] = ok["수수료"].fillna(0) / ok["판매대금"]
+    ok["_f"] = (ok["판매대금"] - ok["수수료"].fillna(0) - ok["지급액"]).clip(lower=0)
+    stat = {mk: {"lo": max(0.0, g["_r"].quantile(0.05) - 0.002), "hi": g["_r"].quantile(0.95) + 0.002, "mean": g["_r"].mean(),
+                 "fmax": float(g["_f"].max()) * 1.2 + 10000} for mk, g in ok.groupby("시장") if len(g) >= 3}
     dm = DM.copy()
     need = U[U["지급액"].isna() & (U["장부금액"].fillna(0) > 0) & (U["미정박스"].fillna(0) == 0)
              & ~U["입금상태"].isin(["입금 확인", "입금 확인(추정)"])].sort_values("날짜")
@@ -588,6 +667,18 @@ def fill_by_ledger(U, DM, win=16, tol=0.012):
             continue
         seg = np.arange(lo, hi)
         ok_ = seg[(~P["used"][lo:hi]) & (np.abs(P["a"][lo:hi] - est) / est <= tol)]
+        if not len(ok_) and mk in stat:                     # 운임을 고려해 다시: 장부금액 − 입금 = 수수료(범위 안) + 운임(0~최대)
+            st_ = stat[mk]; gross = r["장부금액"]
+            for k_ in seg:
+                if P["used"][k_]:
+                    continue
+                dd = gross - P["a"][k_]
+                if dd < 0:
+                    continue
+                f = min(max(round((dd - st_["mean"] * gross) / 1000) * 1000, 0), st_["fmax"])
+                fr = (dd - f) / gross
+                if st_["lo"] - 1e-9 <= fr <= st_["hi"] + 1e-9:
+                    ok_ = np.array([k_]); break
         if len(ok_):
             k = ok_[0]
             P["used"][k] = True

@@ -522,7 +522,10 @@ def _tab_recon(D):
         for c in numc:
             T[c] = pd.to_numeric(T[c], errors="coerce").map(lambda v: "" if pd.isna(v) else f"{v:,.0f}")
         T.loc[T["경매 금액"] == "0", "경매 금액"] = ""          # 팩스가 없으면 경매 금액도 모르는 것 — 0이 아니라 빈칸
-        st.dataframe(T, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 480),
+        # 정산서 없이 통장 입금으로 맞춘 줄(추정·합산·운송비 차감)은 지급액·입금 글자를 갈색 점선 밑줄로 (v1.27.4)
+        est = T["입금"].astype(str).str.contains("추정|합산|운송비|직접").tolist()
+        sty = T.style.apply(lambda c: [EST_CSS if e else "" for e in est], subset=["지급액", "입금"])
+        st.dataframe(sty, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 480),
                      column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
                                     "문제": st.column_config.TextColumn(width="large"), "입금": st.column_config.TextColumn(width="medium"),
                                     "경매일": st.column_config.TextColumn(width="small")})
@@ -554,6 +557,7 @@ def _tab_recon(D):
 - 🔴 **확인 필요**: 경매 팩스가 스캔 폴더에 없음 · 경매에서 박스가 확인 안 됨 · 명세표 금액이 다름 · 정산 지급액의 입금을 못 찾음 — 사람이 봐야 하는 것.
 - 🟡 **참고**: 재정산(장부 비고에 적힘, 팩스는 첫 경락가) · 시장이 kg 단가나 작은 상자로 적어 박스 수만 다른 것(돈은 명세표와 같음).
 - ⏳ **대기**: 명세표가 아직 안 온 달 · 장부에 경락가가 아직 없는 출하 · 입금 기한 전 · 정산서 없이 판매원표만 온 날 — 기다리면(또는 정산서를 스캔하면) 채워집니다.
+- **갈색 점선 밑줄**(지급액·입금 칸): 정산서가 없어 통장 입금으로 맞춘 값입니다 — 경락액(또는 장부액)에서 그 시장 평소 수수료율과 운임(0~평소 최대)을 뺀 금액과 맞는 입금을 찾은 것(추정), 이틀 출하분을 한 정산서로 나눈 것(합산 정산), 가정산 지급액에서 운송비를 뺀 것(운송비 차감), 사람이 직접 적은 것(직접).
 - **지급액** 칸이 비어 있으면 '입금을 못 찾았다'가 아니라 '그날 정산서(팩스)가 없어 지급액을 모른다'는 뜻입니다. 입금을 못 찾은 건은 입금 열에 '입금 못 찾음'이라고 따로 적힙니다.
 - **입금** 열: 입금 확인 = 정산서 지급액과 원 단위 일치 · 입금 확인(추정) = 정산서는 없지만 경락액×그 시장 평소 수수료율과 ±1.2% 안에서 맞는 입금 있음 · 입금 확인(추정·장부) = 경매 팩스가 아예 없어 출고장 금액(=명세표)×수수료율로 맞춘 것(8/12 이전 팩스 전 기간도 이렇게) · 팩스 전 = 그래도 못 맞춘 8/13 이전 출하.
 - **서부청과**는 하루 출하분이 며칠에 걸쳐 팔려서 경리가 홈페이지 '출하주 판매내역'을 달마다 엑셀(루트의 진성)·연우)서부청과_1월 - 복사본.xls)에 붙여 두는데, 서부청과는 팩스 대신 그 엑셀을 경매 자료로 씁니다(경매일별로 빠짐없음).
@@ -566,6 +570,7 @@ def _tab_recon(D):
 
 
 NUMFMT = lambda cols: {c: st.column_config.NumberColumn(format="localized") for c in cols}
+EST_CSS = "color: #a0522d; text-decoration: underline dotted; font-style: italic"     # 정산서 없이 입금으로 추정한 값 표시
 
 
 def _detail(D, X, Z, pick, crop):
@@ -634,8 +639,10 @@ def _detail(D, X, Z, pick, crop):
             if len(Q):
                 Q["날짜"] = Q["날짜"].dt.strftime("%m/%d")
                 Q["입금일"] = pd.to_datetime(Q["입금일"]).dt.strftime("%m/%d %H:%M").fillna("")
-                st.caption("③ 정산 지급액 → 통장 입금")
-                st.dataframe(Q[["날짜", "출하자", "판매대금", "수수료", "운임", "기타공제", "지급액", "입금액", "입금일", "입금대조"]].rename(columns={"날짜": "판매일"}),
+                st.caption("③ 정산 지급액 → 통장 입금 (갈색 점선 밑줄 = 정산서 없이 입금으로 추정한 값: 수수료·운임은 그 시장 평소 비율로 나눈 것)")
+                Q3 = Q[["날짜", "출하자", "판매대금", "수수료", "운임", "기타공제", "지급액", "입금액", "입금일", "입금대조"]].rename(columns={"날짜": "판매일"})
+                est3 = Q3["입금대조"].astype(str).str.contains("추정").tolist()
+                st.dataframe(Q3.style.apply(lambda c: [EST_CSS if e else "" for e in est3], subset=["수수료", "운임", "지급액", "입금대조"]),
                              hide_index=True, **_FULL, column_config=NUMFMT(["판매대금", "수수료", "운임", "기타공제", "지급액", "입금액"]))
         DM = D.get("DEPM", pd.DataFrame())
         if len(DM):
