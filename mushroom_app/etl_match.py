@@ -128,7 +128,13 @@ def match(MD, D, L):
                         take(i, j, t, sale, "경매박스"); need -= t
             # ①-2 단위가 다른 줄: 장부 '미니 24박스 12,000원'이 시장에선 '2kg 비포 96개 3,000원'(한 박스 = k개) — 단가가 1/k 이고
             #     개수가 k배인 줄들을 모아 금액으로 맞춘다 (서부청과 새송이, v1.27.3)
-            for i in [i for i in priced.index if priced.at[i, "날짜"] == sd and left[i] > 0.5 and pd.isna(priced.at[i, "예정경매일"])]:
+            #     비고로 이 경매일에 넘긴 줄·더 앞 출하일에서 넘어온 줄도 같은 방법으로 (9/28 미니 8박스 6,400원 = 9/30 '1,600원 32개', v1.29.4)
+            planned_ = [i for i in priced.index if priced.at[i, "예정경매일"] == sale and left[i] > 0.5]
+            same_ = [i for i in priced.index if priced.at[i, "날짜"] == sd and left[i] > 0.5 and pd.isna(priced.at[i, "예정경매일"])]
+            older_ = [i for i in priced.index if sale - pd.Timedelta(days=LAG_MAX) <= priced.at[i, "날짜"] < sd and left[i] > 0.5
+                      and pd.isna(priced.at[i, "예정경매일"])]
+            for i in planned_ + same_ + older_:
+                kind_ = "이월박스" if gi.at[i, "날짜"] < sd else "경매박스"
                 p_ = round(gi.at[i, "박스단가"])
                 for k in range(2, 11):
                     if p_ % k:
@@ -145,7 +151,7 @@ def match(MD, D, L):
                         if t > 0:
                             left[i] -= t / k
                             F.at[j, "확인박스"] += t
-                            G.at[i, "경매박스"] += t / k
+                            G.at[i, kind_] += t / k
                             G.at[i, "경매금액"] += t * F.at[j, "단가"]
                             G.at[i, "경매일"] = _add_day(G.at[i, "경매일"], sale)
                             F.at[j, "짝"] = f"단위 다름(1박스={k}개) 일치"
