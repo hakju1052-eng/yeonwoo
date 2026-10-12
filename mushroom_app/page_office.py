@@ -696,8 +696,11 @@ def _fax_panel(D, pick):
         return
     stt = D.get("FXS") or {}
     with st.expander(f"팩스 판매원표 — 읽은 {stt.get('done', 0)} / 대상 {stt.get('files', 0)}개" + (f" · 남은 {stt.get('left', 0)}개" if stt.get("left") else "")):
-        st.caption(f"폴더: `{stt.get('root') or '없음'}` · 대상: 'MMDD 팽서울.pdf'처럼 이름을 붙인 {getattr(etl_fax.C, 'FAX_SINCE', '')} 이후 팩스 · "
-                   f"매일 09:00·15:00 갱신 때 새 파일만 최대 {getattr(etl_fax.C, 'FAX_MAX_PER_RUN', 60)}개씩 읽습니다(최근 날짜부터). 마지막으로 읽은 시각 {stt.get('last') or '—'}"
+        auto_api = getattr(etl_fax.C, "FAX_AUTO_API", False)
+        st.caption(f"폴더: `{stt.get('root') or '없음'}` · 대상: 'MMDD 팽서울.pdf'처럼 이름을 붙인 팩스와 팩스기 원본 이름(R25C-…) {getattr(etl_fax.C, 'FAX_SINCE', '')} 이후 · "
+                   + (f"매일 09:00·15:00 갱신 때 새 파일만 최대 {getattr(etl_fax.C, 'FAX_MAX_PER_RUN', 60)}개씩 API 로 읽습니다." if auto_api
+                      else "새 팩스는 Claude 예약 작업('팩스 직접 판독')이 매일 08:20·14:20에 API 없이 직접 읽어 넣습니다(검산 안 맞는 건 비고에 '검산 불일치'). 아래 버튼은 급할 때 API 로 읽는 용도.")
+                   + f" 마지막으로 읽은 시각 {stt.get('last') or '—'}"
                    + (f" · 직접판독 {stt.get('direct', 0):,}개 · 앱(API) {stt.get('api', 0):,}개" if stt.get("direct") else ""))
         if stt.get("error"):
             st.warning(f"읽기 실패 {stt['error']}개 — 다음 갱신 때 다시 시도합니다(3번까지).")

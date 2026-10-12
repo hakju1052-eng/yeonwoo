@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""팩스로 받은 도매시장 판매원표·정산서 읽기 (v1.26.0).
+"""팩스로 받은 도매시장 판매원표·정산서 읽기 (v1.26.0, v1.27.0 예약 직접 판독 연동).
 
 경리 SynologyDrive\\스캔 폴더에 팩스기가 PDF 로 저장하고, 경리가 'MMDD 팽서울.pdf'·'MMDD 새구리 (2).pdf' 처럼
 이름을 붙여 둔다(팽=팽이, 새=새송이, 뒤는 시장 줄임말). 지난 것은 스캔\\보관\\(M월\\) 로 옮긴다.
@@ -21,6 +21,7 @@ MARKET_CODE = {"서울": "서울청과", "동화": "동화청과", "한국": "�
                "대중": "대전중앙청과", "서부": "서부청과", "구리": "구리청과", "경인": "경인농산", "인천": "인천농산물", "광중": "광주중앙청과",
                "대양": "대양청과", "가락": "가락시장", "인농": "인천농산물", "중앙": "광주중앙청과"}
 CROP_CODE = {"팽": "팽이", "새": "새송이"}
+RAW_RE = re.compile(r"^R25C-1i(\d{2})(\d{2})(\d{2})\d{6}\.pdf$", re.I)        # 팩스기가 붙이는 원본 이름(수신 시각)
 
 SYSTEM = """당신은 버섯 농장 경리 보조입니다. 도매시장에서 팩스로 온 문서(판매원표·수탁판매 정산서·출하현황)를 읽어 JSON 으로만 답합니다.
 문서 한 장(같은 출하자·같은 날짜의 표 하나)마다 slips 배열에 하나씩 넣으세요. 페이지가 여러 장이면 모두 읽습니다.
@@ -86,6 +87,13 @@ def list_files(since=None):
     out = []
     for f in glob.glob(os.path.join(root, "*.pdf")) + glob.glob(os.path.join(root, "*", "*.pdf")) + glob.glob(os.path.join(root, "*", "*", "*.pdf")):
         info = file_info(f)
+        if info is None and os.path.dirname(f) == root:           # 팩스기 원본 이름(R25C-1i261008110110.pdf) — 예약 직접 판독이 읽는다 (v1.27.0)
+            m = RAW_RE.match(os.path.basename(f))
+            if m:
+                try:
+                    info = (pd.Timestamp(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3))), None, None)
+                except ValueError:
+                    info = None
         if info and info[0] >= since:
             out.append((f, info))
     return out
@@ -432,6 +440,12 @@ def build(idx=None):
 
 def load():
     p, q = os.path.join(C.CACHE_DIR, "fax_docs.parquet"), os.path.join(C.CACHE_DIR, "fax_lines.parquet")
+    ip = _index_path()
+    if os.path.exists(ip) and (not os.path.exists(p) or os.path.getmtime(ip) > os.path.getmtime(p) + 1):
+        try:                                   # index.json 이 밖에서(예약 직접 판독) 바뀌었으면 표를 다시 만든다 (v1.27.0)
+            return build()
+        except Exception:
+            pass
     docs = pd.read_parquet(p) if os.path.exists(p) else pd.DataFrame()
     lines = pd.read_parquet(q) if os.path.exists(q) else pd.DataFrame()
     return docs, lines
@@ -491,7 +505,7 @@ def status():
     err = [v for k, v in idx.items() if k in keys and v.get("error")]
     last = max((v.get("read_at", "") for v in idx.values()), default="")
     tok = sum((v.get("usage") or {}).get("in") or 0 for v in idx.values()), sum((v.get("usage") or {}).get("out") or 0 for v in idx.values())
-    direct = sum(1 for v in done if v.get("by") == "직접판독")
+    direct = sum(1 for v in done if str(v.get("by", "")).startswith("직접판독"))
     return {"files": len(files), "done": len(done), "error": len(err), "left": len(files) - len(done), "last": last, "tokens": tok, "root": fax_root(),
             "direct": direct, "api": len(done) - direct}
 

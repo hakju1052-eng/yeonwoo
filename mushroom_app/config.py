@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.26.13"
+VERSION = "1.27.0"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -13,6 +13,7 @@ AI_KEY_FILE = r""
 FAX_SINCE = "2026-08-01"
 FAX_MAX_PER_RUN = 60
 FAX_MODEL = ""
+FAX_AUTO_API = False      # 갱신(etl_cli) 때 API 로 팩스를 읽을지. False 면 화면 버튼으로만 — 평소엔 Claude 예약 작업이 직접 읽는다 (v1.27.0)
 AI_KEY_NAMES = ["anthropic_key.txt", "claude_api_key.txt", "claude_api.txt", "cluade_api.txt"]
 SESSION_DAYS = 30                # 로그인 유지 기간(일). 0 으로 두면 유지 기능을 안 씀
 

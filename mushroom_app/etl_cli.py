@@ -29,12 +29,14 @@ def main():
         print(f"반가공 현황: 건너뜀 ({e})")
     t4 = time.time()
     try:   # 팩스 판매원표(경리 SynologyDrive\스캔) — 새 파일만 AI 로 읽음 (v1.26.0)
-        from . import etl_fax, ai_chat
-        if ai_chat.api_key():
+        from . import etl_fax, ai_chat, config as C
+        if getattr(C, "FAX_AUTO_API", False) and ai_chat.api_key():
             n_f, left = etl_fax.run(progress=lambda s: print("  " + s, flush=True))
             print(f"팩스 판매원표: {n_f}개 읽음, 남은 {left}개 ({time.time()-t4:.0f}초)")
         else:
-            print("팩스 판매원표: API 키 없음 - 건너뜀")
+            etl_fax.load()                      # 예약 직접 판독이 index.json 을 바꿨으면 표만 다시 만든다 (v1.27.0)
+            st_ = etl_fax.status()
+            print(f"팩스 판매원표: API 자동 읽기 꺼짐 - 읽은 {st_['done']}개, 남은 {st_['left']}개 (Claude 예약 작업이 읽음)")
     except Exception as e:
         print(f"팩스 판매원표: 건너뜀 ({e})")
 

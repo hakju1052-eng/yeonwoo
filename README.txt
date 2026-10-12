@@ -365,6 +365,16 @@ update_unifarm.bat 에 캐시 갱신을 붙이는 예
     앱이 꺼져 있어도 다시 켜고(부팅 직후 5분은 로그온 자동 시작에 맡김), RESTART_REQUEST.txt 를 만들어 두면 그때도 다시 켭니다.
   - 기록: watch_log.txt · 해제: schtasks /delete /tn "통합관리 앱 자동 재시작" /f
   - 주의: 일부러 stop_app.bat 으로 꺼 두어도 1분 안에 다시 켜집니다(오래 꺼 두려면 위 해제 명령 먼저).
+■ v1.27.0 — 팩스 직접 판독 예약 작업 (API 없이, Claude 가 정해진 시각에 직접 읽음) (2026-10-12)
+  - 사용자: 팩스 문서를 자동으로 변환하는 툴 — API 는 쓰지 말고 정해진 시간에 Claude 가 직접.
+  - 스캔 폴더에는 경리가 이름 붙인 'MMDD 팽서부.pdf' 말고도 팩스기 원본 이름 'R25C-1i261008110110.pdf'(수신 시각) 가 그대로 쌓임(10/08 오후부터 37개).
+    예약 작업은 둘 다 읽고 날짜·시장·작물은 문서 내용으로 정한다. 이름만 바뀐 같은 파일(md5 같음)은 다시 읽지 않고 결과를 그대로 붙임.
+  - mushroom_app\fax_direct.py (표준 라이브러리만): pending(스캔 목록 vs index) → render(PDF→PNG) → merge(검산: 수량×단가=금액·줄 합=합계·합계−공제=지급액,
+    안 맞으면 비고 '검산 불일치: …', by='직접판독(예약)', md5 기록). Claude 예약 작업 '팩스 직접 판독'이 매일 08:20·14:20 에 이 순서로 돌려
+    app_cache\fax\index.json 을 갱신(메인PC 연결 필요 — 자동 승인으로 두면 사람 없이 돎).
+  - etl_fax.load(): index.json 이 parquet 보다 새로우면 표를 다시 만듦(0.4초) → 앱 갱신 때 저절로 반영. list_files 에 R25C 원본도 대상으로(남은 수에 보임).
+  - config.FAX_AUTO_API=False: 09:00·15:00 갱신 때 API 로 읽지 않음(화면 버튼은 그대로, 급할 때만). 팩스 패널 설명 문구 바꿈.
+  - 파일: fax_direct.py(새) · etl_fax.py · etl_cli.py · config.py · page_office.py
 ■ 운영 — GitHub 저장소 연결, 여러 사람이 같이 고치기 (2026-10-12)
   - 사용자: 앱을 여러 사람이 같이 수정·보완할 수 있나 → GitHub 비공개 저장소 + 메인PC 자동 동기화로.
   - app\저장소_연결.bat(한 번): Git 설치(winget) → unifarm\app 을 저장소로(.gitignore 로 API 키·메일/카카오 설정·계정·기록·캐시 제외,
