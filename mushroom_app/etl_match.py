@@ -630,6 +630,31 @@ def _offset_pairs(U, days=7):
     return U
 
 
+def flag_missing(U, today=None, grace=None, since=None):
+    """지급액·입금이 안 잡힌 출하 → 🔴 확인 필요 (v1.29.3, 사용자 요청 '확인해야 해').
+    출하 뒤 grace 일(기본 3일: 경매 다음 날 + 입금 하루 이틀)이 지났는데 입금액이 없으면 확인 필요로 올린다.
+    팩스 전 기간(since 이전)은 정산서가 없어 건별로 맞출 수 없으니 그대로 둔다. 사람이 확인함·보류로 적은 줄도 그대로."""
+    if U is None or U.empty or "입금액" not in U:
+        return U
+    from . import config as C
+    grace = getattr(C, "MISSING_PAY_GRACE_DAYS", 3) if grace is None else grace
+    since = pd.Timestamp(since or getattr(C, "MISSING_PAY_SINCE", "2026-08-13"))
+    today = (pd.Timestamp(today) if today is not None else pd.Timestamp.now()).normalize()
+    U = U.copy()
+    st_ = U["입금상태"].astype(str)
+    hit = (U["입금액"].isna() & (U["날짜"] >= since) & (U["날짜"] <= today - pd.Timedelta(days=grace))
+           & (U["등급"] != "처리") & ~U["문제"].astype(str).str.startswith("보류") & ~st_.str.startswith("팩스 전"))
+    drop = ("아직 입금 전", "정산서 없음(판매원표만 옴)", "입금 못 찾음")
+    for i in U.index[hit]:
+        pay = U.at[i, "지급액"]
+        msg = (f"입금 안 잡힘(지급액 {pay:,.0f}원)" if pd.notna(pay) and pay else "정산서·입금 둘 다 안 잡힘")
+        parts = [x for x in str(U.at[i, "문제"]).split(" · ") if x and x not in drop]
+        U.at[i, "문제"] = " · ".join([msg] + parts)
+        U.at[i, "등급"] = "확인"
+        U.at[i, "입금상태"] = "입금 못 찾음"
+    return U
+
+
 def fill_by_ledger(U, DM, win=16, tol=0.012):
     """경매 팩스(정산서)가 없는 출하일 — 출고장 금액(= 명세표 금액) × (1 − 그 시장 평소 수수료율)과 ±1.2% 안에서 맞는
     남은 입금이 있으면 '입금 확인(추정·장부)'. 팩스 전 기간(8/12 이전)도 이걸로 채운다 (v1.26.10).

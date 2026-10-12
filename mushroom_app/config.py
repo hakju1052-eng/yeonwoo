@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.29.2"
+VERSION = "1.29.3"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -28,6 +28,9 @@ ENTITY_CONFIRMED_SINCE = "2026-08-01"
 # 6% 를 뗀 금액을 '대양보전'으로 따로 입금(2026-09 8건 중 7건 원 단위 일치). 2만 원짜리 '대양보전'은 운송 지원금(경리 확인).
 DAEYANG_BOJEON_RATE = 0.94
 DAEYANG_TRANSPORT_AMOUNT = 20000
+# 출하 대사: 출하 뒤 이 날수가 지나도 지급액·입금이 안 잡히면 🔴 확인 필요 (팩스를 받기 시작한 날부터) (v1.29.3)
+MISSING_PAY_GRACE_DAYS = 3
+MISSING_PAY_SINCE = "2026-08-13"
 # 경영 자료 따로 띄우기 (v1.29.0): 본 앱(8501)에서 '경영 자료'를 누르면 같은 PC 의 다른 포트(office_port.txt, 없으면 8502)로 넘어간다.
 OFFICE_SEPARATE = True
 OFFICE_PORT = 8502
