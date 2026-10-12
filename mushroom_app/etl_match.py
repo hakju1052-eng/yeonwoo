@@ -570,13 +570,11 @@ def unified(J, TW, ST, MD, tol=1000):
             if pd.notna(auc) and auc and pd.notna(stm) and abs(stm - auc) <= tol:
                 (ref if r["재정산"] else red).append("장부 금액이 시장 정산과 다름(명세표는 팩스와 같음)" + (" · 재정산" if r["재정산"] else ""))
             else:
-                red.append(f"명세표 금액 다름({(stm or 0) - (led or 0):+,.0f}원)")
-        elif s == "명세표에 없음":
-            red.append("명세표에 없음")
+                # 경리나라 명세표는 돈 흐름(경매→정산→입금) 밖이라 🔴 대신 🟡 — 명세표가 틀렸으면 경리가 고칠 일 (v1.29.2)
+                ref.append(f"명세표 금액 다름({(stm or 0) - (led or 0):+,.0f}원)")
         elif s == "장부에 없음":
-            red.append("장부에 없음(명세표에만 있음)")
-        elif s == "명세표 아직 없음":
-            wait.append("명세표 아직 없음")
+            ref.append("장부에 없음(명세표에만 있음)")
+        # '명세표에 없음'·'명세표 아직 없음'은 표시하지 않는다 — 명세표는 바로바로 만들어지지 않음 (v1.29.2, 사용자 요청)
         if (r["출고박스"] or 0) == 0 and (pd.notna(auc) and auc or pd.notna(r["지급액"]) and r["지급액"]):
             # 장부엔 그날 그 작물 출고가 없는데 팩스·정산에는 있음 — 한 장에 두 작물이 섞인 정산서(소량)면 참고, 아니면 확인
             amt = r["지급액"] if pd.notna(r["지급액"]) else (auc or 0)
