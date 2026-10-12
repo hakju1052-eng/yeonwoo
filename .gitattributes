@@ -1,0 +1,2 @@
+# 줄바꿈·인코딩을 git 이 바꾸지 않게 (bat 는 CP949+CRLF, py 는 UTF-8 그대로 보관)
+* -text

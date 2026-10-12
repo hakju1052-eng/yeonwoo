@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="ko" data-theme="light"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>반가공 현황</title>
+<style>
+html,body{margin:0;padding:0}
+/* Layout: 상단 고정 헤더+탭 → 월 선택 줄 → 요약 타일 → 2열 패널 → 표. 수치는 표로, 추세는 얇은 막대로 */
+:root{
+  --bg:#F2F3EE; --surface:#FFFFFF; --surface-2:#E9EBE4; --line:#D6D9CF; --grid:#E6E8E1;
+  --ink:#1C231F; --ink-2:#56605A; --ink-3:#7C857F;
+  --accent:#A8660A; --accent-soft:#F5E6C6;
+  --ok:#2C7A4B; --ok-soft:#DCEFE2; --warn:#B4530F; --warn-soft:#FBE8D6; --bad:#B42318; --bad-soft:#FADFDB;
+  --btn:#1C231F; --btn-ink:#F2F3EE;
+  --viz-muted:#C8CCC2;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300;
+  --shadow:0 1px 2px rgba(28,35,31,.06),0 8px 28px rgba(28,35,31,.10);
+  --f-body:"Source Sans Pro","Source Sans 3",-apple-system,"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --f-mono:ui-monospace,"SFMono-Regular",Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141916; --surface:#1C2320; --surface-2:#252E29; --line:#34403A; --grid:#29322D;
+  --ink:#E7ECE6; --ink-2:#A6B0A9; --ink-3:#7F8983;
+  --accent:#E3A642; --accent-soft:#3A2D15;
+  --ok:#62C38B; --ok-soft:#1B3427; --warn:#F09A5A; --warn-soft:#3A2617; --bad:#F2796B; --bad-soft:#3E201C;
+  --btn:#E7ECE6; --btn-ink:#141916; --viz-muted:#3F4A44;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.4);
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141916; --surface:#1C2320; --surface-2:#252E29; --line:#34403A; --grid:#29322D;
+  --ink:#E7ECE6; --ink-2:#A6B0A9; --ink-3:#7F8983;
+  --accent:#E3A642; --accent-soft:#3A2D15;
+  --ok:#62C38B; --ok-soft:#1B3427; --warn:#F09A5A; --warn-soft:#3A2617; --bad:#F2796B; --bad-soft:#3E201C;
+  --btn:#E7ECE6; --btn-ink:#141916; --viz-muted:#3F4A44;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.4);
+  color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3{margin:0;text-wrap:balance;line-height:1.25}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1400px;margin:0 auto;padding-inline:2px}
+#root{padding-bottom:8px}
+
+/* header */
+.top{position:static;background:var(--bg);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding-block:12px 6px}
+.brand{display:flex;align-items:baseline;gap:10px;flex:1 1 auto;min-width:0;flex-wrap:wrap}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:-.01em}
+.brand span{color:var(--ink-2);font-size:14px}
+.stamp{font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border-radius:999px;padding:4px 10px;white-space:nowrap}
+.stamp.bad{background:var(--bad-soft);color:var(--bad)}
+.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{border:0;background:none;padding:9px 12px 11px;font-weight:500;color:var(--ink-2);border-bottom:3px solid transparent;white-space:nowrap;cursor:pointer;min-height:42px}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:700}
+.tab .n{display:inline-block;min-width:17px;height:17px;border-radius:9px;background:var(--warn);color:var(--surface);font-size:11px;line-height:17px;text-align:center;padding:0 4px;margin-left:4px;font-weight:700}
+
+/* month filter row */
+.filters{display:flex;align-items:center;gap:8px;padding-block:14px 4px;overflow-x:auto;scrollbar-width:thin}
+.filters .lbl{font-size:13px;color:var(--ink-2);white-space:nowrap;margin-right:2px}
+.chip{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);cursor:pointer;font-size:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip[aria-pressed="true"]{background:var(--btn);color:var(--btn-ink);border-color:var(--btn)}
+.chip small{font-size:11px;opacity:.75;margin-left:3px}
+main{padding-block:12px 16px}
+
+/* generic */
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin:6px 0 14px}
+.head h2{font-size:21px;font-weight:700}
+.head p{margin:3px 0 0;color:var(--ink-2);font-size:14px;max-width:72ch}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:16px;align-items:start}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px;align-items:start}
+.mt{margin-top:16px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
+.panel>h3{font-size:15px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:baseline;gap:4px 10px;flex-wrap:wrap}
+.panel>h3 small{font-weight:400;color:var(--ink-3);font-size:12.5px}
+.note{font-size:13px;color:var(--ink-2);background:var(--surface-2);border-radius:8px;padding:10px 12px;margin:10px 0 0}
+.muted{color:var(--ink-3)}
+.small{font-size:12px}
+.empty{color:var(--ink-3);font-size:14px;padding:10px 2px;margin:0}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--surface-2);color:var(--ink-2);white-space:nowrap;vertical-align:1px}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.acc{background:var(--accent-soft);color:var(--accent)}
+.btn{min-height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);cursor:pointer;font-size:14px;font-weight:500}
+.btn:hover{border-color:var(--ink-3)}
+.btn.link{border:0;background:none;color:var(--accent);padding:0 4px;min-height:28px;font-size:13px}
+.banner{border-radius:var(--r);padding:14px 16px;background:var(--warn-soft);color:var(--warn);font-weight:500;margin:0 0 16px}
+
+/* KPI tiles */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px;display:grid;gap:3px;align-content:start;min-width:0}
+.kpi .lbl{font-size:13px;color:var(--ink-2)}
+.kpi .v{font-size:27px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+.kpi .v small{font-size:14px;font-weight:500;color:var(--ink-2);margin-left:2px}
+.kpi .v.na{font-size:17px;color:var(--ink-3);font-weight:500;line-height:1.4}
+.kpi .d{font-size:12.5px;color:var(--ink-3)}
+.kpi .d b{font-weight:700}
+.kpi .d .up{color:var(--ok)} .kpi .d .down{color:var(--bad)} .kpi .d .flat{color:var(--ink-2)}
+.kpi .s{font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere}
+.kpi.alert{box-shadow:inset 4px 0 0 var(--warn)}
+
+/* tables */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.panel .tw{border:0;border-radius:0;margin:0 -4px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--grid);vertical-align:top}
+th{font-size:12px;font-weight:500;color:var(--ink-2);background:var(--surface-2);white-space:nowrap}
+.panel th{background:none;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.nw{white-space:nowrap}
+tr.sum td{font-weight:700;border-top:1px solid var(--line)}
+tr.dim td{color:var(--ink-3)}
+.wide{min-width:680px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:0}
+.bt{display:flex;align-items:center;gap:8px;min-width:140px}
+.bt i{display:block;height:8px;border-radius:0 4px 4px 0;background:var(--s1);min-width:2px;flex:none}
+.bt span{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* charts (HTML 막대) */
+.chart{margin:0;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;min-width:0}
+.chart .cap{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.chart .cap b{font-size:15px}
+.chart .cap small{color:var(--ink-3);font-size:12.5px;font-weight:400}
+.legend{display:flex;gap:4px 14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.plot{position:relative;height:var(--h,180px);margin-left:50px;margin-top:18px}
+.yt{position:absolute;left:-50px;width:44px;text-align:right;font-size:11px;color:var(--ink-3);transform:translateY(50%);font-variant-numeric:tabular-nums;line-height:1;white-space:nowrap}
+.gl{position:absolute;left:0;right:0;border-top:1px solid var(--grid)}
+.gl.base{border-top-color:var(--line)}
+.cols{position:absolute;inset:0;display:flex;align-items:stretch}
+.col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;position:relative;cursor:default;border-radius:4px}
+.col:hover,.col:focus{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+.col:focus{outline:2px solid var(--accent);outline-offset:-2px}
+.stk{width:min(24px,64%);display:flex;flex-direction:column-reverse;gap:2px}
+.seg{display:block;width:100%}
+.stk .seg:last-child{border-radius:4px 4px 0 0}
+.vlab{position:absolute;left:50%;transform:translate(-50%,-4px);font-size:11px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;line-height:1;padding-bottom:2px}
+.xl{display:flex;margin-left:50px;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.xl span{flex:1 1 0;min-width:0;text-align:center;white-space:nowrap;overflow:hidden;line-height:1.3}
+.xl span b{display:block;font-weight:500;color:var(--ink-2);font-size:10.5px}
+.xl span.on{color:var(--ink);font-weight:700}
+.xl.dense span:nth-child(even):not(.on){visibility:hidden}
+@media (max-width:560px){ .xl.many span:nth-child(even):not(.on){visibility:hidden} }
+.tv{justify-self:start}
+.tip{position:fixed;z-index:60;pointer-events:none;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:8px 10px;font-size:12.5px;min-width:130px;max-width:270px}
+.tip .tt{color:var(--ink-2);margin-bottom:4px}
+.tip .tr{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.tip .tr span{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2)}
+.tip .tr span i{width:12px;height:2px;border-radius:1px;display:inline-block}
+.tip .tr b{font-variant-numeric:tabular-nums}
+
+/* product cards */
+.pcard{display:grid;gap:10px}
+.pcard .ph{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap}
+.pcard .ph b{font-size:16px}
+.pcard .ph .last{margin-left:auto;font-size:12.5px;color:var(--ink-3)}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
+.m{background:var(--surface-2);border-radius:8px;padding:8px 10px;min-width:0}
+.m span{display:block;font-size:12px;color:var(--ink-2)}
+.m b{font-size:16px;font-variant-numeric:tabular-nums}
+.m b small{font-size:12px;font-weight:400;color:var(--ink-2);margin-left:2px}
+.m em{display:block;font-style:normal;font-size:11.5px;color:var(--ink-3)}
+.pcard.idle{opacity:.8}
+
+/* logs */
+.logf{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.logf input,.logf select{min-height:38px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:0 12px}
+.logf input{flex:1 1 220px;min-width:0}
+.rep{display:grid;grid-template-columns:96px minmax(0,1fr);gap:4px 14px;padding:12px 0;border-bottom:1px solid var(--grid)}
+.rep:last-child{border-bottom:0}
+.rep .rd{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+.rep .rd small{display:block;font-weight:400;color:var(--ink-3);font-size:12px}
+.rep ul{margin:0;padding:0;list-style:none;display:grid;gap:4px}
+.rep li{font-size:14px;line-height:1.5;padding-left:12px;position:relative;overflow-wrap:anywhere}
+.rep li::before{content:"";position:absolute;left:0;top:.68em;width:5px;height:5px;border-radius:50%;background:var(--ink-3)}
+.rep li.sub{padding-left:26px;color:var(--ink-2);font-size:13.5px}
+.rep li.sub::before{left:14px;width:5px;height:1px;border-radius:0;top:.78em}
+.rep li .pill{margin-left:6px;font-size:11px;padding:0 6px}
+mark{background:var(--accent-soft);color:inherit;border-radius:3px;padding:0 1px}
+.issues{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.issues li{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;font-size:13.5px}
+.issues li>span{color:var(--ink-3);font-variant-numeric:tabular-nums}
+details.req{border-bottom:1px solid var(--grid);padding:10px 0}
+details.req:last-child{border-bottom:0}
+details.req summary{cursor:pointer;display:grid;grid-template-columns:78px minmax(0,1fr) auto;gap:10px;align-items:baseline;list-style:none}
+details.req summary::-webkit-details-marker{display:none}
+details.req summary .t{font-size:14px;min-width:0}
+details.req summary .t small{display:block;color:var(--ink-3);font-size:12.5px}
+details.req summary .a{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+details.req[open] summary{margin-bottom:8px}
+.purpose{white-space:pre-line;font-size:13px;color:var(--ink-2);margin:8px 0 0}
+ol.steps{margin:0;padding-left:20px;display:grid;gap:6px;font-size:14px}
+@media (max-width:560px){
+  .brand h1{font-size:17px}
+  .kpi .v{font-size:23px}
+  .rep{grid-template-columns:1fr}
+  details.req summary{grid-template-columns:62px minmax(0,1fr)}
+  details.req summary .a{grid-column:2}
+  .plot,.xl{margin-left:44px} .yt{left:-44px;width:40px}
+}
+@media (prefers-reduced-motion:no-preference){ .col{transition:background .12s} }
+</style>
+</head><body>
+<div id="root">
+<header class="top">
+  <div class="wrap">
+    <div class="bar">
+      <div class="brand"><h1>연우 반가공센터</h1><span>업무 현황</span></div>
+      <span class="stamp" id="stamp">자료 불러오는 중…</span>
+    </div>
+    <nav class="tabs" role="tablist" id="tabs"></nav>
+  </div>
+</header>
+<div class="wrap"><div class="filters" id="filters" hidden></div></div>
+<main class="wrap" id="view"></main>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+"use strict";
+/* ───────── 기본 설정 ───────── */
+const DOCS = { meta:"meta/info", prod:"prod/summary", daily:"prod/daily", sales:"sales/all", purchase:"purchase/all",
+  ledgers:"stock/ledgers", labor:"labor/all", boiler:"equip/boiler", reports:"reports/all" };
+const PROD_ORDER = ["crunteen","homi","dalkom","mattang","stick","cube"];
+const PNAME = { crunteen:"크런틴", homi:"호미칩", dalkom:"달콤바삭 고구마칩", mattang:"생고구맛탕칩", stick:"고구마스틱", cube:"허니맛탕큐브",
+  sweet:"스윗구마칩", etc:"운임·파레트 등", other:"기타", fee:"운임·택배" };
+const PUNIT = { crunteen:"봉", homi:"봉", dalkom:"봉", mattang:"봉", stick:"", cube:"개" };
+const PCOLOR = { crunteen:"var(--s1)", homi:"var(--s2)", dalkom:"var(--s3)", mattang:"var(--s4)", stick:"var(--s5)", cube:"var(--s6)" };
+const BONG = new Set(["crunteen","homi","dalkom","mattang"]);
+const TABS = [["home","한눈에"],["prod","생산"],["sales","매출·출고"],["stock","재고"],["buy","구매"],["labor","인력"],["log","업무일지"],["src","자료"]];
+const MONTH_TABS = new Set(["home","prod","sales","buy","labor"]);
+const CONTINUOUS = { labor:1, ledger_sub:1, ledger_pack:1, boiler:1, reports:1 };
+const LOG_TAGS = ["전체","설비","입고","출고","생산","인력","위생","개발","구매"];
+const STALE_DAYS = 21;
+
+const S = { db:null, conn:"wait", D:null, tab:"home", month:null, today:null, admin:true,
+  logQ:"", logTag:"전체", logMonth:"전체", logLimit:20, tables:{}, tips:{}, tipSeq:0 };
+
+/* ───────── 유틸 ───────── */
+const $ = (s, r=document) => r.querySelector(s);
+const pad = n => String(n).padStart(2,"0");
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function fmt(n, d=0){ if (n == null || isNaN(n)) return "—"; return Number(n).toLocaleString("ko-KR",{maximumFractionDigits:d}); }
+function won(n){ if (n == null) return "—"; const a = Math.abs(n);
+  if (a >= 1e8) return (n/1e8).toLocaleString("ko-KR",{maximumFractionDigits:2}) + "억";
+  if (a >= 1e4) return Math.round(n/1e4).toLocaleString("ko-KR") + "만";
+  return fmt(n); }
+function compact(n){ if (n == null) return ""; const a = Math.abs(n);
+  if (a >= 1e8) return (n/1e8).toFixed(a >= 1e9 ? 0 : 1).replace(/\.0$/,"") + "억";
+  if (a >= 1e4) return (n/1e4).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/,"") + "만";
+  if (a >= 1e3) return (n/1e3).toFixed(1).replace(/\.0$/,"") + "천";
+  return fmt(n); }
+const WD = ["일","월","화","수","목","금","토"];
+function dObj(s){ return new Date(s + "T00:00:00"); }
+function iso(d){ return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()); }
+function dShort(s){ const d = dObj(s); return (d.getMonth()+1) + "." + d.getDate(); }
+function dLabel(s){ const d = dObj(s); return (d.getMonth()+1) + "." + d.getDate() + " (" + WD[d.getDay()] + ")"; }
+function mLabel(m){ return (+m.slice(5)) + "월"; }
+function mLong(m){ return m.slice(0,4) + "년 " + mLabel(m); }
+function addMonth(m,k){ let y = +m.slice(0,4), mo = +m.slice(5) + k; while (mo < 1){ mo += 12; y--; } while (mo > 12){ mo -= 12; y++; } return y + "-" + pad(mo); }
+function daysIn(m){ return new Date(+m.slice(0,4), +m.slice(5), 0).getDate(); }
+function daysBetween(a,b){ return Math.round((dObj(b) - dObj(a)) / 864e5); }
+function daysAgo(n){ const d = dObj(S.today); d.setDate(d.getDate() - n); return iso(d); }
+function sum(arr, f){ let a = 0; for (const x of arr) a += (typeof f === "function" ? f(x) : x[f]) || 0; return a; }
+function keySum(r, base){ let a = 0; for (const k in r){ if (k === base || k.startsWith(base + "|")) a += r[k] || 0; } return a; }
+function period(m){ const t = S.today; if (t.slice(0,7) === m) return { start:m+"-01", end:t, partial:true, day:+t.slice(8), m };
+  return { start:m+"-01", end:m+"-"+pad(daysIn(m)), partial:false, m }; }
+function prevPeriod(m){ const pm = addMonth(m,-1), p = period(m);
+  if (p.partial){ const d = Math.min(p.day, daysIn(pm)); return { start:pm+"-01", end:pm+"-"+pad(d), partial:true, day:d, m:pm }; }
+  return { start:pm+"-01", end:pm+"-"+pad(daysIn(pm)), partial:false, m:pm }; }
+const inP = (d,P) => d >= P.start && d <= P.end;
+function pText(P){ return P.partial ? `${+P.m.slice(5)}월 1~${P.day}일` : `${+P.m.slice(5)}월`; }
+function hl(text, q){ const t = esc(text); if (!q) return t; const qq = esc(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); return t.replace(new RegExp(qq, "gi"), m => "<mark>" + m + "</mark>"); }
+
+/* ───────── 데이터 꺼내기 ───────── */
+function sales(){ return ((S.D.sales||{}).statements||[]).filter(s => s.d >= "2025-01-01" && s.d <= S.today); }
+function purchases(){ return ((S.D.purchase||{}).requests||[]).filter(q => q.d >= "2025-01-01" && q.d <= S.today); }
+function daily(){ return ((S.D.daily||{}).rows||[]); }
+function products(){ return ((S.D.prod||{}).products||[]); }
+function prodByKey(k){ return products().find(p => p.key === k); }
+function laborMonths(){ return ((S.D.labor||{}).months||{}); }
+function laborIn(P){
+  const mo = laborMonths()[P.m]; if (!mo) return null;
+  const days = mo.days.filter(d => inP(d[0], P));
+  return { hours: sum(days, d => d[1]), days, workers: mo.workers, file: mo.file, full: !P.partial,
+    night: P.partial ? null : sum(mo.workers, w => w.night),
+    heads: mo.workers.filter(w => (w.day + w.night) > 0).length,
+    activeDays: days.filter(d => d[1] > 0).length };
+}
+function reports(){ return ((S.D.reports||{}).reports||[]).filter(r => r.d <= S.today); }
+function sourceStatus(src){
+  if (!src.latest) return { age:null, stale: !!CONTINUOUS[src.key] };
+  const age = daysBetween(src.latest, S.today);
+  return { age, stale: !!CONTINUOUS[src.key] && age > STALE_DAYS };
+}
+function staleSources(){ return ((S.D.meta||{}).sources||[]).filter(s => sourceStatus(s).stale); }
+
+/* ───────── 툴팁 ───────── */
+function tipId(obj){ const id = "t" + (++S.tipSeq); S.tips[id] = obj; return id; }
+function showTip(el, x, y){
+  const t = S.tips[el.dataset.tip]; if (!t) return;
+  const box = $("#tip"); box.textContent = "";
+  const tt = document.createElement("div"); tt.className = "tt"; tt.textContent = t.title; box.appendChild(tt);
+  for (const r of t.rows){
+    const row = document.createElement("div"); row.className = "tr";
+    const sp = document.createElement("span");
+    if (r.color){ const i = document.createElement("i"); i.style.background = r.color; sp.appendChild(i); }
+    sp.appendChild(document.createTextNode(r.label)); row.appendChild(sp);
+    const b = document.createElement("b"); b.textContent = r.value; row.appendChild(b);
+    box.appendChild(row);
+  }
+  box.hidden = false;
+  const bw = box.offsetWidth, bh = box.offsetHeight, W = window.innerWidth, H = window.innerHeight;
+  let lx = x + 14, ly = y - bh - 10;
+  if (lx + bw > W - 8) lx = x - bw - 14;
+  if (lx < 8) lx = 8;
+  if (ly < 8) ly = y + 16;
+  if (ly + bh > H - 8) ly = H - bh - 8;
+  box.style.left = lx + "px"; box.style.top = ly + "px";
+}
+function hideTip(){ $("#tip").hidden = true; }
+document.addEventListener("pointermove", e => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el) showTip(el, e.clientX, e.clientY); else if (!$("#tip").hidden) hideTip(); });
+document.addEventListener("pointerleave", hideTip);
+document.addEventListener("focusin", e => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el){ const r = el.getBoundingClientRect(); showTip(el, r.left + r.width/2, r.top); } });
+document.addEventListener("focusout", hideTip);
+window.addEventListener("scroll", hideTip, { passive:true });
+
+/* ───────── 막대 차트 ─────────
+   단일 계열: 고른 달만 계열색, 나머지는 회색(강조형). 여러 계열: 고정 순서 색 + 범례 */
+function niceMax(v){ if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p;
+  const m = n<=1?1 : n<=1.2?1.2 : n<=1.5?1.5 : n<=2?2 : n<=2.5?2.5 : n<=3?3 : n<=4?4 : n<=5?5 : n<=6?6 : n<=8?8 : 10; return m * p; }
+function barChart(o){
+  const id = o.id, H = o.height || 180, single = o.series.length === 1;
+  const totals = o.cats.map((c,i) => sum(o.series, s => s.values[i] || 0));
+  const max = niceMax(Math.max(0, ...totals));
+  const ticks = [0, .25, .5, .75, 1].map(f => f * max);
+  let h = `<figure class="chart" id="${id}"><div class="cap"><b>${esc(o.title)}</b><small>${esc(o.unitNote || "")}</small></div>`;
+  if (!single) h += `<div class="legend">` + o.series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("") + `</div>`;
+  h += `<div class="plot" style="--h:${H}px">`;
+  for (const t of ticks) h += `<div class="gl${t === 0 ? " base" : ""}" style="bottom:${t / max * 100}%"></div><div class="yt" style="bottom:${t / max * 100}%">${esc(o.tickFmt ? o.tickFmt(t) : compact(t))}</div>`;
+  h += `<div class="cols">`;
+  const labelIdx = new Set((o.labelIdx || []).filter(i => i >= 0));
+  o.cats.forEach((c, i) => {
+    const rows = single ? [{ label: o.series[0].name, value: o.valFmt(totals[i]) }]
+      : o.series.filter(s => s.values[i]).map(s => ({ color: s.color, label: s.name, value: o.valFmt(s.values[i]) })).concat([{ label: "합계", value: o.valFmt(totals[i]) }]);
+    const tid = tipId({ title: c.tipTitle || c.label, rows: rows.concat(c.extra || []) });
+    h += `<div class="col" tabindex="0" data-tip="${tid}" aria-label="${esc((c.tipTitle || c.label) + " " + o.valFmt(totals[i]))}">`;
+    if (labelIdx.has(i) && totals[i] > 0) h += `<span class="vlab" style="bottom:${totals[i] / max * 100}%">${esc(o.capFmt ? o.capFmt(totals[i]) : compact(totals[i]))}</span>`;
+    h += `<div class="stk">`;
+    o.series.forEach(s => {
+      const v = s.values[i] || 0; if (v <= 0) return;
+      const col = single ? (c.on || o.noEmphasis ? s.color : "var(--viz-muted)") : s.color;
+      h += `<span class="seg" style="height:${Math.max(1, H * v / max).toFixed(1)}px;background:${col}"></span>`;
+    });
+    h += `</div></div>`;
+  });
+  h += `</div></div><div class="xl${o.cats.length > 16 ? " dense" : o.cats.length >= 10 ? " many" : ""}">` + o.cats.map(c => `<span class="${c.on ? "on" : ""}">${c.sub ? `<b>${esc(c.sub)}</b>` : ""}${esc(c.label)}</span>`).join("") + `</div>`;
+  const open = !!S.tables[id];
+  h += `<button class="btn link tv" data-act="tv" data-id="${id}" aria-expanded="${open}">${open ? "표 닫기" : "표로 보기"}</button>`;
+  h += `<div class="tw" ${open ? "" : "hidden"}><table><thead><tr><th>${esc(o.catHead || "구분")}</th>` + o.series.map(s => `<th class="n">${esc(s.name)}</th>`).join("") + (single ? "" : `<th class="n">합계</th>`) + `</tr></thead><tbody>` +
+    o.cats.map((c,i) => `<tr><td class="nw">${esc(c.tipTitle || c.label)}</td>` + o.series.map(s => `<td class="n">${esc(o.valFmt(s.values[i] || 0))}</td>`).join("") + (single ? "" : `<td class="n">${esc(o.valFmt(totals[i]))}</td>`) + `</tr>`).join("") + `</tbody></table></div>`;
+  return h + `</figure>`;
+}
+function monthCats(from, to, sel){
+  const out = []; let m = from;
+  while (m <= to){
+    const first = out.length === 0 || m.slice(5) === "01";
+    const partial = m === S.today.slice(0,7);
+    out.push({ key:m, label:mLabel(m), sub: first ? "’" + m.slice(2,4) : "", on: m === sel, tipTitle: mLong(m) + (partial ? ` (1~${+S.today.slice(8)}일)` : "") });
+    m = addMonth(m, 1);
+  }
+  return out;
+}
+
+/* ───────── 공통 조각 ───────── */
+function kpi(o){
+  if (o.na) return `<div class="kpi"><span class="lbl">${esc(o.label)}</span><span class="v na">${esc(o.na)}</span>${o.sub ? `<span class="s">${o.sub}</span>` : ""}</div>`;
+  let d = "";
+  if (o.prev !== undefined && o.prev !== null){
+    if (o.prev > 0){
+      const pct = (o.cur - o.prev) / o.prev * 100; const dir = Math.abs(pct) < 0.5 ? "flat" : pct > 0 ? "up" : "down";
+      const cls = o.good === "up" ? dir : "flat";
+      d = `<span class="d"><b class="${cls}">${dir === "up" ? "▲" : dir === "down" ? "▼" : "＝"} ${fmt(Math.abs(pct))}%</b> · ${esc(o.prevLabel)} ${esc(o.prevFmt(o.prev))}</span>`;
+    } else d = `<span class="d">${esc(o.prevLabel)} 기록 없음</span>`;
+  }
+  return `<div class="kpi${o.alert ? " alert" : ""}"><span class="lbl">${esc(o.label)}</span><span class="v">${o.value}${o.unit ? `<small>${esc(o.unit)}</small>` : ""}</span>${d}${o.sub ? `<span class="s">${o.sub}</span>` : ""}${o.sub2 ? `<span class="s">${o.sub2}</span>` : ""}</div>`;
+}
+function tagPills(tags){ return (tags || []).map(t => `<span class="pill ${t === "설비" ? "warn" : ""}">${esc(t)}</span>`).join(""); }
+function sw(k){ return `<span class="sw" style="background:${PCOLOR[k] || "var(--viz-muted)"}"></span>`; }
+function stalePill(src){ const st = sourceStatus(src); if (!src.latest) return `<span class="pill warn">기록 없음</span>`;
+  if (st.stale) return `<span class="pill warn">${st.age}일째 새 기록 없음</span>`; return `<span class="pill ok">최근 기록</span>`; }
+const SHORT = { "오리지널":"오리", "청양마요":"청양", "고추장허니":"고추장", "스모키머스터드":"스모키", "핫치폴레":"핫치", "기본":"달콤", "치즈맛":"치즈" };
+function variantName(k, v){ if (k === "dalkom") return v === "치즈맛" ? "달콤바삭 치즈맛" : v === "기본" ? "달콤바삭" : v; return v === "전체" ? "전체" : v; }
+function stockText(p){
+  const ents = Object.entries(p.stock || {}); const unit = PUNIT[p.key];
+  if (ents.length){ const tot = sum(ents, e => e[1].v); return `${fmt(tot)}${unit}${ents.some(e => e[1].basis !== "기록") ? `<sup class="muted" title="일지의 포장−출고 누계로 계산">*</sup>` : ""}`; }
+  if (p.semi) return `반제품 ${fmt(p.semi.v)}kg`;
+  return "—";
+}
+function salesExtra(ym){
+  const ss = sales().filter(s => s.d.slice(0,7) === ym), fee = sum(ss, "fee");
+  return [{ label:"명세표", value: ss.length + "건" }].concat(fee ? [{ label:"그중 운임·택배", value: fmt(fee) + "원" }] : []);
+}
+function custTable(custs){
+  const tot = sum(custs, c => c[1].amt); const max = Math.max(1, ...custs.map(c => c[1].amt));
+  return `<div class="tw"><table><thead><tr><th>거래처</th><th class="n">건수</th><th>공급가액</th><th class="n">비중</th></tr></thead><tbody>` +
+    custs.map(([k,v]) => `<tr><td class="nw">${esc(k)}</td><td class="n">${v.n}</td><td><div class="bt"><i style="width:${Math.max(2, v.amt / max * 100) * 0.6}%"></i><span>${esc(fmt(v.amt))}</span></div></td><td class="n">${tot ? fmt(v.amt / tot * 100, 1) : 0}%</td></tr>`).join("") +
+    `<tr class="sum"><td>합계</td><td class="n">${sum(custs, c => c[1].n)}</td><td><span style="font-variant-numeric:tabular-nums">${esc(fmt(tot))}원</span></td><td class="n">100%</td></tr></tbody></table></div>`;
+}
+
+/* ───────── 한눈에 ───────── */
+function vHome(){
+  const M = S.month, P = period(M), PP = prevPeriod(M);
+  const prevLabel = P.partial ? `전월 1~${PP.day}일` : "전월";
+  const st = sales().filter(s => inP(s.d,P)), stp = sales().filter(s => inP(s.d,PP));
+  const rows = daily().filter(r => inP(r.d,P)), rowsP = daily().filter(r => inP(r.d,PP));
+  const proc = sum(rows, r => keySum(r,"procUse")), procP = sum(rowsP, r => keySum(r,"procUse"));
+  const pack = sum(rows.filter(r => BONG.has(r.p)), r => keySum(r,"pack")), packP = sum(rowsP.filter(r => BONG.has(r.p)), r => keySum(r,"pack"));
+  const lab = laborIn(P), labP = laborIn(PP);
+  const pu = purchases().filter(q => inP(q.d,P)), puP = purchases().filter(q => inP(q.d,PP));
+  const stale = staleSources();
+  const byC = {}; for (const s of st){ byC[s.cust] = byC[s.cust] || { amt:0, n:0 }; byC[s.cust].amt += s.supply || 0; byC[s.cust].n++; }
+  const custs = Object.entries(byC).sort((a,b) => b[1].amt - a[1].amt);
+  const byP = {}; for (const r of rows){ const v = byP[r.p] = byP[r.p] || { proc:0, pack:0, ship:0 }; v.proc += keySum(r,"procUse"); v.pack += keySum(r,"pack"); v.ship += keySum(r,"ship"); }
+  const top = (key, unit, only) => Object.entries(byP).filter(([k,v]) => v[key] > 0 && (!only || only.has(k))).sort((a,b) => b[1][key] - a[1][key]).slice(0,2).map(([k,v]) => `${PNAME[k]} ${fmt(v[key])}${unit}`).join(" · ");
+  const bigBuy = pu.slice().sort((a,b) => (b.total||0) - (a.total||0))[0];
+
+  let h = `<div class="head"><div><h2>${esc(pText(P))} 한눈에</h2><p>${P.partial ? `${esc(dLabel(S.today))}까지 들어온 기록입니다. 증감은 ${esc(prevLabel)}과 비교합니다.` : `${esc(mLong(M))} 한 달 기록입니다. 증감은 전월 전체와 비교합니다.`}</p></div></div>`;
+  h += `<section class="kpis">`;
+  h += kpi({ label:"매출 (공급가액)", value:esc(won(sum(st,"supply"))), unit:"원", cur:sum(st,"supply"), prev:sum(stp,"supply"), prevLabel, prevFmt:v => won(v)+"원", good:"up",
+    sub: st.length ? `명세표 ${st.length}건${custs[0] ? ` · ${esc(custs[0][0])} ${esc(won(custs[0][1].amt))}원` : ""}` : "거래명세표 없음",
+    sub2: sum(st,"fee") ? `운임·택배 ${esc(won(sum(st,"fee")))}원 포함` : "" });
+  h += kpi({ label:"원물 가공량", value:esc(fmt(proc)), unit:"kg", cur:proc, prev:procP, prevLabel, prevFmt:v => fmt(v)+"kg", good:"up", sub: esc(top("proc","kg")) || "가공 기록 없음" });
+  h += kpi({ label:"포장 생산", value:esc(fmt(pack)), unit:"봉", cur:pack, prev:packP, prevLabel, prevFmt:v => fmt(v)+"봉", good:"up", sub: esc(top("pack","봉",BONG)) || "포장 기록 없음" });
+  h += lab ? kpi({ label:"근무시간", value:esc(fmt(lab.hours,1)), unit:"시간", cur:lab.hours, prev: labP ? labP.hours : null, prevLabel, prevFmt:v => fmt(v,1)+"시간", good:"none",
+        sub: `${lab.heads}명 · 근무일 ${lab.activeDays}일${lab.full && lab.night ? ` · 야간 ${fmt(lab.night,1)}시간` : ""}` })
+    : kpi({ label:"근무시간", na:`${mLabel(M)} 근무일지 없음`, sub: laborMonths()[addMonth(M,-1)] ? `<button class="btn link" data-month="${addMonth(M,-1)}">${esc(mLabel(addMonth(M,-1)))} 근무 보기</button>` : "" });
+  h += kpi({ label:"구매 결재", value:esc(won(sum(pu,"total"))), unit:"원", cur:sum(pu,"total"), prev:sum(puP,"total"), prevLabel, prevFmt:v => won(v)+"원", good:"none",
+    sub: pu.length ? `${pu.length}건${bigBuy ? ` · 최대: ${esc(bigBuy.items[0].name)}` : ""}` : "결재요청 없음" });
+  h += `<div class="kpi${stale.length ? " alert" : ""}"><span class="lbl">기록 점검</span><span class="v">${stale.length}<small>건</small></span><span class="s">${stale.length ? esc(stale.map(s => s.label).join(", ")) + ` · ${STALE_DAYS}일 넘게 새 기록 없음` : "매일 쓰는 일지가 모두 최근까지 기록됨"}</span>${stale.length ? `<span class="s"><button class="btn link" data-go="src">자료 현황 보기</button></span>` : ""}</div>`;
+  h += `</section>`;
+
+  const to = S.today.slice(0,7);
+  const mcats = monthCats(addMonth(to,-12), to, M);
+  const salesByM = mcats.map(c => sum(sales().filter(s => s.d.slice(0,7) === c.key), "supply"));
+  mcats.forEach(c => c.extra = salesExtra(c.key));
+  const pm = []; { let m = "2026-03"; while (m <= to){ pm.push(m); m = addMonth(m,1); } }
+  const pcats = monthCats(pm[0], to, M);
+  const pser = PROD_ORDER.filter(k => prodByKey(k)).map(k => ({ key:k, name:PNAME[k], color:PCOLOR[k],
+    values: pm.map(m => sum(daily().filter(r => r.p === k && r.d.slice(0,7) === m), r => keySum(r,"procUse"))) }));
+  h += `<div class="grid2">`;
+  h += `<div class="panel">` + barChart({ id:"c-sales", title:"월별 매출", unitNote:"공급가액 · 운임·택배 포함", cats:mcats, catHead:"월",
+      series:[{ key:"s", name:"매출", color:"var(--s1)", values:salesByM }], valFmt:v => fmt(v)+"원", capFmt:v => won(v),
+      labelIdx:[mcats.findIndex(c => c.on), salesByM.indexOf(Math.max(...salesByM))] }) + `</div>`;
+  h += `<div class="panel">` + barChart({ id:"c-proc", title:"월별 원물 가공량", unitNote:"kg · 가공일지의 가공 사용량", cats:pcats, catHead:"월",
+      series:pser, valFmt:v => fmt(v)+"kg", capFmt:v => compact(v), labelIdx:[pcats.findIndex(c => c.on)] }) + `</div>`;
+  h += `</div>`;
+
+  h += `<div class="grid2 mt">`;
+  h += `<div class="panel"><h3>제품별 ${esc(pText(P))} <small>가공일지 기준 · 재고는 현재 값</small></h3><div class="tw"><table><thead><tr><th>제품</th><th class="n">원물 가공</th><th class="n">포장</th><th class="n">출고</th><th class="n">현재 재고</th><th class="n">최근 작업</th></tr></thead><tbody>`;
+  for (const k of PROD_ORDER){
+    const p = prodByKey(k); if (!p) continue;
+    const v = byP[k] || { proc:0, pack:0, ship:0 }; const unit = PUNIT[k];
+    const idle = !v.proc && !v.pack && !v.ship;
+    h += `<tr class="${idle ? "dim" : ""}"><td class="nw">${sw(k)}${esc(PNAME[k])}</td><td class="n">${v.proc ? fmt(v.proc)+"kg" : "—"}</td><td class="n">${v.pack ? fmt(v.pack)+unit : "—"}</td><td class="n">${v.ship ? fmt(v.ship)+unit : "—"}</td><td class="n">${stockText(p)}</td><td class="n">${p.lastActivity ? esc(dShort(p.lastActivity)) : "—"}</td></tr>`;
+  }
+  h += `</tbody></table></div><p class="muted small" style="margin:8px 0 0">* 재고 칸이 비어 있어 포장에서 출고를 빼서 계산한 값입니다.</p></div>`;
+  h += `<div class="panel"><h3>거래처별 매출 <small>${esc(pText(P))} · 공급가액</small></h3>${custs.length ? custTable(custs) : `<p class="empty">${esc(pText(P))} 거래명세표가 없습니다.</p>`}</div>`;
+  h += `</div>`;
+
+  const reps = reports().slice(-5).reverse();
+  const issues = [];
+  const f30 = daysAgo(30), f60 = daysAgo(60);
+  for (const r of reports()) if (r.d >= f30) for (const l of r.lines) if ((l.tags||[]).includes("설비")) issues.push({ d:r.d, t:l.t, src:"업무일지" });
+  for (const q of purchases()) if (q.d >= f60) for (const it of q.items) if (/수리|교체|A\/?S|정비|부품|패킹/.test(it.name)) issues.push({ d:q.d, t:`${it.name}${it.vendor ? ` · ${it.vendor}` : ""} · ${won(it.sum)}원`, src:"결재요청" });
+  issues.sort((a,b) => b.d.localeCompare(a.d));
+  h += `<div class="grid2 mt">`;
+  h += `<div class="panel"><h3>최근 업무일지 <small><button class="btn link" data-go="log">전체 보기</button></small></h3>`;
+  h += reps.length ? reps.map(r => `<div class="rep"><div class="rd">${esc(dLabel(r.d))}<small>${esc(r.by || "")}</small></div><ul>${r.lines.slice(0,6).map(l => `<li class="${l.sub ? "sub" : ""}">${esc(l.t)}</li>`).join("")}${r.lines.length > 6 ? `<li class="sub muted">외 ${r.lines.length - 6}줄</li>` : ""}</ul></div>`).join("") : `<p class="empty">업무일지가 없습니다.</p>`;
+  h += `</div><div class="panel"><h3>설비·수리 이슈 <small>업무일지 30일 · 결재요청 60일</small></h3>`;
+  h += issues.length ? `<ul class="issues">${issues.slice(0,10).map(i => `<li><span>${esc(dShort(i.d))}</span><div>${esc(i.t)} <span class="pill">${esc(i.src)}</span></div></li>`).join("")}</ul>` : `<p class="empty">최근 설비 이슈 기록이 없습니다.</p>`;
+  h += `</div></div>`;
+  return h;
+}
+
+/* ───────── 생산 ───────── */
+function vProd(){
+  const M = S.month, P = period(M);
+  const rows = daily().filter(r => inP(r.d,P));
+  const ps = S.D.prod || {};
+  const m = (label, val, unit, note) => `<div class="m"><span>${esc(label)}</span><b>${val ? esc(fmt(val,1)) : "—"}${val && unit ? `<small>${esc(unit)}</small>` : ""}</b>${note ? `<em>${esc(note)}</em>` : ""}</div>`;
+  let h = `<div class="head"><div><h2>${esc(pText(P))} 생산</h2><p>제품별 가공일지에서 원물 입고, 가공 사용량, 포장·출고를 모았습니다. 재고는 일지에 적힌 값을 쓰고, 적힌 값이 없으면 포장에서 출고를 뺀 누계로 계산합니다.</p></div></div>`;
+  h += `<div class="grid3">`;
+  for (const k of PROD_ORDER){
+    const p = prodByKey(k); if (!p) continue;
+    const r = rows.filter(x => x.p === k);
+    const v = { rawIn: sum(r, x => keySum(x,"rawIn")), proc: sum(r, x => keySum(x,"procUse")), batches: sum(r, x => keySum(x,"batches")), oil: sum(r, x => keySum(x,"oilUse")), pack: sum(r, x => keySum(x,"pack")), ship: sum(r, x => keySum(x,"ship")) };
+    const unit = PUNIT[k], idle = !r.length;
+    h += `<div class="panel pcard${idle ? " idle" : ""}"><div class="ph">${sw(k)}<b>${esc(PNAME[k])}</b><span class="pill">${esc(p.kind)}</span>${idle ? `<span class="pill">이달 작업 없음</span>` : ""}<span class="last">최근 작업 ${p.lastActivity ? esc(dShort(p.lastActivity)) : "—"}</span></div>`;
+    h += `<div class="mgrid">` + m("원물 입고", v.rawIn, "kg") + m("가공 사용", v.proc, "kg") + m("가공 횟수", v.batches, "회") + m("유지 사용", v.oil, "캔") +
+      (k === "stick" ? "" : m("포장", v.pack, unit) + m("출고", v.ship, unit)) + `</div>`;
+    if (k === "crunteen"){
+      const fr = (p.variants || []).map(f => ({ f, pack: sum(r, x => x["pack|"+f] || 0), ship: sum(r, x => x["ship|"+f] || 0), st: (p.stock || {})[f] }));
+      h += `<div class="tw"><table><thead><tr><th>맛</th><th class="n">포장</th><th class="n">출고</th><th class="n">현재 재고</th></tr></thead><tbody>` +
+        fr.map(x => `<tr><td>${esc(x.f)}</td><td class="n">${x.pack ? fmt(x.pack) : "—"}</td><td class="n">${x.ship ? fmt(x.ship) : "—"}</td><td class="n">${x.st ? fmt(x.st.v) : "—"}</td></tr>`).join("") +
+        `<tr class="sum"><td>합계</td><td class="n">${sum(fr,"pack") ? fmt(sum(fr,"pack")) : "—"}</td><td class="n">${sum(fr,"ship") ? fmt(sum(fr,"ship")) : "—"}</td><td class="n">${fmt(sum(fr, x => x.st ? x.st.v : 0))}</td></tr></tbody></table></div>`;
+      const anyStock = Object.values(p.stock || {})[0];
+      if (anyStock) h += `<p class="muted small" style="margin:0">재고는 ${esc(dShort(anyStock.d))} 일지 기록 기준 (단위: 봉)</p>`;
+    } else if (k === "dalkom"){
+      const fr = ["기본","치즈맛"].map(f => ({ f, pack: sum(r, x => x["pack|"+f] || 0), ship: sum(r, x => x["ship|"+f] || 0), st: (p.stock || {})[f] }));
+      if (fr.some(x => x.pack || x.ship || x.st)) h += `<div class="tw"><table><thead><tr><th>종류</th><th class="n">포장</th><th class="n">출고</th><th class="n">재고(계산)</th></tr></thead><tbody>` +
+        fr.map(x => `<tr><td>${esc(variantName("dalkom", x.f))}</td><td class="n">${x.pack ? fmt(x.pack) : "—"}</td><td class="n">${x.ship ? fmt(x.ship) : "—"}</td><td class="n">${x.st ? fmt(x.st.v) : "—"}</td></tr>`).join("") + `</tbody></table></div>`;
+    } else {
+      const ents = Object.entries(p.stock || {});
+      if (ents.length) h += `<p class="muted small" style="margin:0">현재 재고 ${esc(fmt(sum(ents, e => e[1].v)))}${esc(unit)} · ${esc(dShort(ents[0][1].d))} ${esc(ents[0][1].basis === "기록" ? "일지 기록" : "포장−출고 계산")}</p>`;
+      else if (p.semi) h += `<p class="muted small" style="margin:0">반제품 재고 ${esc(fmt(p.semi.v))}kg (${esc(dShort(p.semi.d))} 기록). 거래명세표에는 20kg 박스 단위로 나갑니다.</p>`;
+    }
+    h += `</div>`;
+  }
+  h += `</div>`;
+
+  const rs = ps.rawStock || {}, oil = ps.oil;
+  const fuel = sum(rows, r => keySum(r,"fuel"));
+  h += `<div class="grid2 mt"><div class="panel"><h3>원료·유지 <small>크런틴 가공일지 기준</small></h3><div class="mgrid">` +
+    m("감자 (연우 보유)", rs.rawStockY ? rs.rawStockY.v : 0, "kg", rs.rawStockY ? dShort(rs.rawStockY.d) + " 기록" : "") +
+    m("감자 (한성 보유)", rs.rawStockH ? rs.rawStockH.v : 0, "kg", rs.rawStockH ? dShort(rs.rawStockH.d) + " 기록" : "") +
+    m("현미유 재고", oil ? oil.v : 0, "캔", oil ? mLabel(oil.ym) + " 일지" : "") +
+    m("경유 주유", fuel, "L", pText(P)) +
+    `</div><p class="note">한성 보유분은 전처리(임가공)를 맡긴 한성그린팩토리에 있는 감자입니다.</p></div>`;
+  const cr = prodByKey("crunteen");
+  const yrows = cr ? Object.entries(cr.months).filter(([mm,v]) => v.yIn).sort() : [];
+  h += `<div class="panel"><h3>크런틴 수율 <small>수율 = GOOD ÷ 투입량 · 시험 유탕 기록</small></h3>` + (yrows.length ? `<div class="tw"><table><thead><tr><th>월</th><th class="n">투입량</th><th class="n">유탕 후</th><th class="n">GOOD</th><th class="n">BAD</th><th class="n">수율</th></tr></thead><tbody>` +
+    yrows.map(([mm,v]) => `<tr class="${mm === M ? "sum" : ""}"><td class="nw">${esc(mLong(mm))}</td><td class="n">${fmt(v.yIn,1)}kg</td><td class="n">${fmt(v.yOut,1)}</td><td class="n">${fmt(v.yGood,1)}</td><td class="n">${fmt(v.yBad,1)}</td><td class="n">${fmt(v.yGood / v.yIn * 100,1)}%</td></tr>`).join("") + `</tbody></table></div>` : `<p class="empty">수율 기록이 없습니다.</p>`) + `</div></div>`;
+
+  const byDay = rows.slice().sort((a,b) => a.d.localeCompare(b.d) || PROD_ORDER.indexOf(a.p) - PROD_ORDER.indexOf(b.p));
+  h += `<div class="panel mt"><h3>일별 작업 <small>${esc(pText(P))} · ${byDay.length}건 · 크런틴 맛: 오리=오리지널, 청양=청양마요, 고추장=고추장허니, 스모키=스모키머스터드, 핫치=핫치폴레</small></h3>`;
+  if (byDay.length){
+    h += `<div class="tw"><table class="wide"><thead><tr><th>날짜</th><th>제품</th><th class="n">원물 입고</th><th class="n">가공 사용</th><th class="n">가공 횟수</th><th class="n">유지</th><th class="n">포장</th><th class="n">출고</th><th>비고</th></tr></thead><tbody>`;
+    let last = "";
+    for (const r of byDay){
+      const unit = PUNIT[r.p];
+      const vparts = base => Object.keys(r).filter(k => k.startsWith(base + "|") && r[k]).map(k => `${SHORT[k.split("|")[1]] || k.split("|")[1]} ${fmt(r[k])}`).join(" · ");
+      const note = [r.fuel ? `경유 ${fmt(r.fuel)}L 주유` : "", r.oilIn ? `현미유 ${fmt(r.oilIn)}캔 입고` : "", r.note || ""].filter(Boolean).join(" · ");
+      const pk = keySum(r,"pack"), sh = keySum(r,"ship"), pu = keySum(r,"procUse");
+      h += `<tr><td class="nw">${r.d !== last ? esc(dLabel(r.d)) : ""}</td><td class="nw">${sw(r.p)}${esc(PNAME[r.p])}</td><td class="n">${r.rawIn ? fmt(r.rawIn)+"kg" : ""}</td><td class="n">${pu ? fmt(pu)+"kg" : ""}</td><td class="n">${r.batches ? fmt(r.batches) : ""}</td><td class="n">${r.oilUse ? fmt(r.oilUse,1)+"캔" : ""}</td>` +
+        `<td class="n">${pk ? fmt(pk)+unit : ""}${vparts("pack") ? `<div class="muted small">${esc(vparts("pack"))}</div>` : ""}</td><td class="n">${sh ? fmt(sh)+unit : ""}${vparts("ship") ? `<div class="muted small">${esc(vparts("ship"))}</div>` : ""}</td><td>${esc(note)}</td></tr>`;
+      last = r.d;
+    }
+    h += `</tbody></table></div>`;
+  } else h += `<p class="empty">${esc(pText(P))} 가공일지 기록이 없습니다.</p>`;
+  h += `</div>`;
+  return h;
+}
+
+/* ───────── 매출·출고 ───────── */
+function vSales(){
+  const M = S.month, P = period(M);
+  const st = sales().filter(s => inP(s.d,P)).sort((a,b) => b.d.localeCompare(a.d));
+  const to = S.today.slice(0,7);
+  const mcats = monthCats(addMonth(to,-12), to, M);
+  const vals = mcats.map(c => sum(sales().filter(s => s.d.slice(0,7) === c.key), "supply"));
+  mcats.forEach(c => c.extra = salesExtra(c.key));
+  let h = `<div class="head"><div><h2>${esc(pText(P))} 매출·출고</h2><p>거래명세표의 공급가액(부가세 제외)으로 집계합니다. 제품과 함께 청구한 운임·택배비도 매출에 들어가며, 얼마인지는 아래 운임·택배비 표에 따로 모았습니다. 가공일지의 출고 수량과 명세표 수량이 다르면 출고 대조표에 표시됩니다.</p></div></div>`;
+  h += `<section class="kpis">` +
+    kpi({ label:"매출 (공급가액)", value:esc(won(sum(st,"supply"))), unit:"원", sub: sum(st,"fee") ? `운임·택배 ${esc(won(sum(st,"fee")))}원 포함 · 부가세 별도` : "부가세 별도" }) +
+    kpi({ label:"거래명세표", value:esc(String(st.length)), unit:"건", sub: st.length ? `마지막 ${esc(dLabel(st[0].d))}` : "" }) +
+    kpi({ label:"거래처", value:esc(String(new Set(st.map(s => s.cust)).size)), unit:"곳" }) + `</section>`;
+  const byC = {}; for (const s of st){ byC[s.cust] = byC[s.cust] || { amt:0, n:0 }; byC[s.cust].amt += s.supply || 0; byC[s.cust].n++; }
+  const custs = Object.entries(byC).sort((a,b) => b[1].amt - a[1].amt);
+  h += `<div class="grid2"><div class="panel">` + barChart({ id:"c-sales2", title:"월별 매출", unitNote:"공급가액 · 운임·택배 포함", cats:mcats, catHead:"월",
+      series:[{ key:"s", name:"매출", color:"var(--s1)", values:vals }], valFmt:v => fmt(v)+"원", capFmt:v => won(v), labelIdx:[mcats.findIndex(c => c.on), vals.indexOf(Math.max(...vals))] }) + `</div>`;
+  h += `<div class="panel"><h3>거래처별 <small>${esc(pText(P))}</small></h3>${custs.length ? custTable(custs) : `<p class="empty">거래명세표가 없습니다.</p>`}</div></div>`;
+
+  const byP = {}; let feeAmt = 0;
+  for (const s of st) for (const l of s.lines){ if (l.p === "etc"){ feeAmt += l.amt || 0; continue; } const v = byP[l.p] = byP[l.p] || { q:0, a:0 }; v.q += l.qty || 0; v.a += l.amt || 0; }
+  const prows = Object.entries(byP).sort((a,b) => b[1].a - a[1].a);
+  if (feeAmt) prows.push(["fee", { q:0, a:feeAmt }]);   // 함께 청구한 운임·택배 — 파레트·콘티(수량만)는 아래 따로
+  const isMisc = k => k === "etc" || k === "other" || k === "fee";
+  h += `<div class="grid2 mt"><div class="panel"><h3>제품별 <small>${esc(pText(P))} · 명세표 품목</small></h3>` + (prows.length ? `<div class="tw"><table><thead><tr><th>제품</th><th class="n">수량</th><th class="n">공급가액</th><th class="n">평균 단가</th></tr></thead><tbody>` +
+    prows.map(([k,v]) => `<tr><td class="nw">${PCOLOR[k] ? sw(k) : ""}${esc(PNAME[k] || k)}</td><td class="n">${isMisc(k) ? "—" : fmt(v.q)}${k === "stick" && v.q ? " 박스" : ""}</td><td class="n">${fmt(v.a)}</td><td class="n">${v.q && !isMisc(k) ? fmt(v.a / v.q) : "—"}</td></tr>`).join("") + `</tbody></table></div>` : `<p class="empty">품목이 없습니다.</p>`) + `</div>`;
+
+  const rows = daily().filter(r => inP(r.d,P));
+  const lines = st.flatMap(s => s.lines);
+  const rec = PROD_ORDER.map(k => ({ k, log: sum(rows.filter(r => r.p === k), r => keySum(r,"ship")), inv: sum(lines.filter(l => l.p === k), l => l.qty) })).filter(x => x.log || x.inv);
+  h += `<div class="panel"><h3>출고 대조 <small>가공일지 출고 ↔ 거래명세표 수량</small></h3>` + (rec.length ? `<div class="tw"><table><thead><tr><th>제품</th><th class="n">일지 출고</th><th class="n">명세표</th><th class="n">차이</th><th></th></tr></thead><tbody>` +
+    rec.map(x => { const d = x.log - x.inv;
+      const note = x.k === "stick" ? `<span class="pill">명세표는 20kg 박스</span>` : d === 0 ? `<span class="pill ok">일치</span>` : x.inv === 0 ? `<span class="pill warn">명세표 없음</span>` : x.log === 0 ? `<span class="pill warn">일지 출고 없음</span>` : `<span class="pill warn">${d > 0 ? "일지가 더 많음" : "명세표가 더 많음"}</span>`;
+      return `<tr><td class="nw">${sw(x.k)}${esc(PNAME[x.k])}</td><td class="n">${x.k === "stick" ? "—" : fmt(x.log)}</td><td class="n">${fmt(x.inv)}${x.k === "stick" ? " 박스" : ""}</td><td class="n">${x.k === "stick" ? "—" : (d > 0 ? "+" : "") + fmt(d)}</td><td>${note}</td></tr>`; }).join("") +
+    `</tbody></table></div><p class="note">명세표 날짜와 실제 출고일이 다르면 월이 바뀌는 시기에 차이가 생깁니다. 샘플·반품처럼 명세표가 없는 출고는 일지에만 남습니다.</p>` : `<p class="empty">출고 기록이 없습니다.</p>`) + `</div></div>`;
+
+  // 명세표에 함께 적힌 운임·택배비(금액, 매출에 포함)와 파레트·콘티(수량만) — 따로 모아 보여 준다
+  const etc = st.flatMap(s => s.lines.filter(l => l.p === "etc" && (l.qty || l.amt)).map(l => ({ d:s.d, cust:s.cust, item:l.item, qty:l.qty, amt:l.amt })));
+  const fees = etc.filter(x => x.amt), boxes = etc.filter(x => !x.amt);
+  const etcTable = (rows, head, val) => `<div class="tw"><table><thead><tr><th>날짜</th><th>거래처</th><th>항목</th><th class="n">${head}</th></tr></thead><tbody>` +
+    rows.map(x => `<tr><td class="nw">${esc(dShort(x.d))}</td><td class="nw">${esc(x.cust)}</td><td class="nw">${esc(x.item)}</td><td class="n">${esc(fmt(val(x)))}</td></tr>`).join("");
+  if (etc.length){
+    h += `<div class="grid2 mt">`;
+    if (fees.length) h += `<div class="panel"><h3>운임·택배비 <small>${esc(pText(P))} · 매출에 포함된 금액</small></h3>` + etcTable(fees, "금액", x => x.amt) +
+      `<tr class="sum"><td colspan="3">합계</td><td class="n">${esc(fmt(sum(fees,"amt")))}</td></tr></tbody></table></div>` +
+      `<p class="note">거래명세표로 제품과 함께 청구한 운임·택배비입니다. 매출(공급가액)에 포함돼 있고, 여기서는 얼마인지만 따로 모았습니다.</p></div>`;
+    if (boxes.length) h += `<div class="panel"><h3>파레트·콘티 <small>${esc(pText(P))} · 수량만 적힌 항목</small></h3>` + etcTable(boxes, "수량", x => x.qty) +
+      `</tbody></table></div><p class="note">금액 없이 수량만 적혀 있어 매출 금액과는 상관없습니다. 그래서 제품별 표에는 넣지 않았습니다.</p></div>`;
+    h += `</div>`;
+  }
+  h += `<div class="panel mt"><h3>거래명세표 <small>${esc(pText(P))} · ${st.length}건</small></h3>`;
+  h += st.length ? `<div class="tw"><table class="wide"><thead><tr><th>날짜</th><th>거래처</th><th>품목</th><th class="n">공급가액</th><th class="n">그중 운임·택배</th><th class="n">합계 (VAT)</th></tr></thead><tbody>` +
+    st.map(s => { const box = s.lines.filter(l => l.p === "etc" && l.qty);   // 파레트·콘티(수량만) — 운임·택배 금액은 옆 칸
+      return `<tr><td class="nw">${esc(dLabel(s.d))}</td><td class="nw">${esc(s.cust)}${s.site ? `<div class="muted small">${esc(s.site)}</div>` : ""}</td><td>${s.lines.filter(l => l.p !== "etc" && (l.qty || l.amt)).map(l => `${esc(l.item)}${l.qty ? ` <span class="muted">${esc(fmt(l.qty))}</span>` : ""}`).join("<br>")}${box.length ? `<div class="muted small">${box.map(l => `${esc(l.item)} ${esc(fmt(l.qty))}`).join(" · ")}</div>` : ""}</td><td class="n">${s.supply ? fmt(s.supply) : "—"}</td><td class="n">${s.fee ? fmt(s.fee) : ""}</td><td class="n">${fmt(s.total)}</td></tr>`; }).join("") +
+    `<tr class="sum"><td colspan="3">합계</td><td class="n">${fmt(sum(st,"supply"))}</td><td class="n">${fmt(sum(st,"fee"))}</td><td class="n">${fmt(sum(st,"total"))}</td></tr></tbody></table></div>` : `<p class="empty">${esc(pText(P))} 거래명세표가 없습니다.</p>`;
+  h += `</div>`;
+  return h;
+}
+
+/* ───────── 재고 ───────── */
+function vStock(){
+  const ps = S.D.prod || {}, L = S.D.ledgers || {};
+  const srcs = (S.D.meta || {}).sources || [];
+  let h = `<div class="head"><div><h2>재고</h2><p>완제품은 가공일지, 감자·현미유는 크런틴 가공일지, 부재료·부자재는 수불부의 마지막 시트에서 계산합니다. 표마다 기준일을 함께 적었습니다.</p></div></div>`;
+  h += `<div class="grid2"><div class="panel"><h3>완제품 <small>기록 = 일지의 재고 칸 · 계산 = 포장−출고 누계</small></h3><div class="tw"><table><thead><tr><th>제품</th><th>구분</th><th class="n">재고</th><th class="n">기준일</th><th></th></tr></thead><tbody>`;
+  for (const k of PROD_ORDER){
+    const p = prodByKey(k); if (!p) continue;
+    const ents = Object.entries(p.stock || {});
+    if (!ents.length){ h += `<tr class="dim"><td class="nw">${sw(k)}${esc(PNAME[k])}</td><td>${p.semi ? "반제품" : "—"}</td><td class="n">${p.semi ? fmt(p.semi.v)+"kg" : "—"}</td><td class="n">${p.semi ? esc(dShort(p.semi.d)) : ""}</td><td>${p.semi ? `<span class="pill">기록</span>` : ""}</td></tr>`; continue; }
+    ents.forEach(([vn,s],i) => { h += `<tr><td class="nw">${i === 0 ? sw(k) + esc(PNAME[k]) : ""}</td><td>${esc(variantName(k, vn))}</td><td class="n">${fmt(s.v)}${PUNIT[k]}</td><td class="n">${esc(dShort(s.d))}</td><td><span class="pill ${s.basis === "기록" ? "" : "acc"}">${esc(s.basis || "")}</span></td></tr>`; });
+  }
+  h += `</tbody></table></div></div>`;
+  const rs = ps.rawStock || {}, oil = ps.oil;
+  h += `<div class="panel"><h3>원료·유지 <small>크런틴 가공일지</small></h3><div class="tw"><table><tbody>` +
+    `<tr><td>감자 (연우 보유)</td><td class="n">${rs.rawStockY ? fmt(rs.rawStockY.v)+"kg" : "—"}</td><td class="n muted">${rs.rawStockY ? esc(dShort(rs.rawStockY.d)) : ""}</td></tr>` +
+    `<tr><td>감자 (한성그린팩토리 보유)</td><td class="n">${rs.rawStockH ? fmt(rs.rawStockH.v)+"kg" : "—"}</td><td class="n muted">${rs.rawStockH ? esc(dShort(rs.rawStockH.d)) : ""}</td></tr>` +
+    `<tr><td>현미유</td><td class="n">${oil ? fmt(oil.v)+"캔" : "—"}</td><td class="n muted">${oil ? esc(mLabel(oil.ym))+" 일지" : ""}</td></tr></tbody></table></div></div></div>`;
+
+  const sub = L.sub, pk = L.pack;
+  const sSrc = srcs.find(s => s.key === "ledger_sub"), pSrc = srcs.find(s => s.key === "ledger_pack");
+  h += `<div class="grid2 mt">`;
+  if (sub){
+    h += `<div class="panel"><h3>부재료 <small>${esc(sub.sheet)} 시트 · 마지막 기록 ${sub.lastEntry ? esc(dShort(sub.lastEntry)) : "없음"} ${sSrc ? stalePill(sSrc) : ""}</small></h3><div class="tw"><table><thead><tr><th>품목</th><th class="n">이월</th><th class="n">입고</th><th class="n">사용</th><th class="n">재고</th></tr></thead><tbody>` +
+      sub.items.map(i => `<tr><td>${esc(i.name)}${i.unit ? ` <span class="muted">(${esc(i.unit)})</span>` : ""}</td><td class="n">${i.carry != null ? fmt(i.carry) : "—"}</td><td class="n">${i.in ? fmt(i.in) : ""}</td><td class="n">${i.out ? fmt(i.out) : ""}</td><td class="n">${i.stock < 0 || (i.carry == null && i.out > 0) ? `<span class="pill warn">확인 필요</span> ` : ""}${fmt(i.stock)}</td></tr>`).join("") +
+      `</tbody></table></div><p class="note">재고 = 이월 + 입고 − 사용으로 계산했습니다.${sub.dateYm && sub.dateYm !== sub.ym ? ` 이 시트는 이름이 ${esc(mLabel(sub.ym))}이지만 날짜 칸이 ${esc(mLabel(sub.dateYm))}로 되어 있어, ${esc(mLabel(sub.ym))} 입출고가 따로 적히지 않았을 수 있습니다.` : ""}</p></div>`;
+  }
+  if (pk){
+    const inner = pk.items.filter(i => i.group === "내포장지"), outer = pk.items.filter(i => i.group !== "내포장지");
+    h += `<div class="panel"><h3>부자재 <small>${esc(pk.sheet)} 시트 · 마지막 기록 ${pk.lastEntry ? esc(dShort(pk.lastEntry)) : "없음"} ${pSrc ? stalePill(pSrc) : ""}</small></h3>`;
+    h += `<div class="tw"><table><thead><tr><th>내포장지</th><th class="n">이월</th><th class="n">입고</th><th class="n">사용</th><th class="n">불량</th><th class="n">재고</th></tr></thead><tbody>` +
+      inner.map(i => `<tr><td>${esc(i.product || i.name)}</td><td class="n">${i.carry != null ? fmt(i.carry) : "—"}</td><td class="n">${i.in ? fmt(i.in) : ""}</td><td class="n">${i.out ? fmt(i.out) : ""}</td><td class="n">${i.bad ? fmt(i.bad) : ""}</td><td class="n">${fmt(i.stock)}</td></tr>`).join("") + `</tbody></table></div>`;
+    h += `<div class="tw" style="margin-top:12px"><table><thead><tr><th>외포장지</th><th>품목</th><th class="n">입고</th><th class="n">사용</th><th class="n">재고</th></tr></thead><tbody>`;
+    let lastP = null;
+    for (const i of outer){ h += `<tr><td>${i.product !== lastP ? esc(i.product || "") : ""}</td><td>${esc(i.name)}</td><td class="n">${i.in ? fmt(i.in) : ""}</td><td class="n">${i.out ? fmt(i.out) : ""}</td><td class="n">${fmt(i.stock)}</td></tr>`; lastP = i.product; }
+    h += `</tbody></table></div></div>`;
+  }
+  h += `</div>`;
+  return h;
+}
+
+/* ───────── 구매 ───────── */
+function vBuy(){
+  const M = S.month, P = period(M);
+  const pu = purchases().filter(q => inP(q.d,P)).sort((a,b) => b.d.localeCompare(a.d));
+  const to = S.today.slice(0,7);
+  const mcats = monthCats(addMonth(to,-12), to, M);
+  const vals = mcats.map(c => sum(purchases().filter(q => q.d.slice(0,7) === c.key), "total"));
+  mcats.forEach(c => c.extra = [{ label:"결재요청", value: purchases().filter(q => q.d.slice(0,7) === c.key).length + "건" }]);
+  let h = `<div class="head"><div><h2>${esc(pText(P))} 구매</h2><p>결재요청서의 합계(세액 포함)입니다. 항목을 누르면 품목, 업체, 구매 목적이 보입니다.</p></div></div>`;
+  h += `<section class="kpis">` + kpi({ label:"결재 금액", value:esc(won(sum(pu,"total"))), unit:"원", sub:`${pu.length}건` }) +
+    kpi({ label:"품목", value:esc(String(sum(pu, q => q.items.length))), unit:"개" }) + `</section>`;
+  h += `<div class="grid2"><div class="panel">` + barChart({ id:"c-buy", title:"월별 구매 결재액", unitNote:"결재요청서 합계", cats:mcats, catHead:"월",
+      series:[{ key:"b", name:"결재액", color:"var(--s1)", values:vals }], valFmt:v => fmt(v)+"원", capFmt:v => won(v), labelIdx:[mcats.findIndex(c => c.on), vals.indexOf(Math.max(...vals))] }) + `</div>`;
+  const f6 = addMonth(M,-5) + "-01";
+  const byV = {};
+  for (const q of purchases()) if (q.d >= f6 && q.d <= P.end) for (const it of q.items){ const v = it.vendor || "업체 미기재"; byV[v] = byV[v] || { a:0, n:0 }; byV[v].a += it.sum || 0; byV[v].n++; }
+  const vrows = Object.entries(byV).sort((a,b) => b[1].a - a[1].a).slice(0,12);
+  const vmax = Math.max(1, ...vrows.map(v => v[1].a));
+  h += `<div class="panel"><h3>업체별 <small>${esc(mLabel(addMonth(M,-5)))}~${esc(mLabel(M))} · 상위 12곳</small></h3>` + (vrows.length ? `<div class="tw"><table><thead><tr><th>업체</th><th class="n">품목</th><th>금액</th></tr></thead><tbody>` +
+    vrows.map(([k,v]) => `<tr><td class="nw">${esc(k)}</td><td class="n">${v.n}</td><td><div class="bt"><i style="width:${Math.max(2, v.a / vmax * 100) * 0.6}%"></i><span>${esc(won(v.a))}원</span></div></td></tr>`).join("") + `</tbody></table></div>` : `<p class="empty">기록이 없습니다.</p>`) + `</div></div>`;
+  h += `<div class="panel mt"><h3>결재요청 <small>${esc(pText(P))} · ${pu.length}건</small></h3>`;
+  h += pu.length ? pu.map(q => {
+    const names = q.items.map(i => i.name); const vend = [...new Set(q.items.map(i => i.vendor).filter(Boolean))];
+    return `<details class="req"><summary><span class="nw">${esc(dLabel(q.d))}</span><span class="t">${esc(names.slice(0,3).join(", "))}${names.length > 3 ? ` 외 ${names.length - 3}건` : ""}<small>${esc(vend.slice(0,3).join(", ") || "업체 미기재")}${q.dept ? ` · ${esc(q.dept)}` : ""}</small></span><span class="a">${esc(fmt(q.total))}원</span></summary>` +
+      `<div class="tw"><table><thead><tr><th>품목</th><th>규격</th><th class="n">수량</th><th class="n">단가</th><th class="n">계</th><th>업체</th></tr></thead><tbody>` +
+      q.items.map(i => `<tr><td>${esc(i.name)}</td><td>${esc(i.spec || "")}</td><td class="n">${i.qty != null ? esc(fmt(i.qty,2)) + (i.unit ? " " + esc(i.unit) : "") : ""}</td><td class="n">${i.price != null ? fmt(i.price) : ""}</td><td class="n">${i.sum != null ? fmt(i.sum) : ""}</td><td>${esc(i.vendor || "")}</td></tr>`).join("") +
+      `</tbody></table></div>${q.purpose ? `<p class="purpose">${esc(q.purpose.replace(/\s*\/\s*-/g, "\n-"))}</p>` : ""}</details>`; }).join("") : `<p class="empty">${esc(pText(P))} 결재요청이 없습니다.</p>`;
+  h += `</div>`;
+  return h;
+}
+
+/* ───────── 인력 ───────── */
+function vLabor(){
+  const M = S.month, P = period(M);
+  const LB = S.D.labor || {};
+  const lab = laborIn(P);
+  const months = Object.keys(laborMonths()).sort();
+  let h = `<div class="head"><div><h2>${esc(pText(P))} 인력</h2><p>근무일지의 주간·야간 시간, 추가수당 지급요청서, 업무 분담표를 모았습니다.</p></div></div>`;
+  if (!lab){
+    const last = months[months.length - 1];
+    h += `<p class="banner">${esc(mLabel(M))} 근무일지가 아직 없습니다.${last ? ` <button class="btn" data-month="${last}">${esc(mLabel(last))} 근무 보기</button>` : ""}</p>`;
+  } else {
+    const ot = (LB.overtime || {})[M];
+    h += `<section class="kpis">` +
+      kpi({ label:"총 근무시간", value:esc(fmt(lab.hours,1)), unit:"시간", sub:`근무일 ${lab.activeDays}일` }) +
+      kpi({ label:"근무 인원", value:esc(String(lab.heads)), unit:"명", sub: lab.full ? `1인 평균 ${esc(fmt(lab.hours / Math.max(1,lab.heads),1))}시간` : "" }) +
+      (lab.full ? kpi({ label:"야간 근무", value:esc(fmt(lab.night,1)), unit:"시간", sub:"근무일지의 야간 칸 합계" }) : "") +
+      kpi({ label:"추가수당", value: ot ? esc(won(ot.total)) : "—", unit: ot ? "원" : "", sub: ot ? esc(ot.items.map(i => i.name).join(", ")) : "요청서 없음" }) + `</section>`;
+    const dcats = lab.days.map(d => ({ key:d[0], label:String(+d[0].slice(8)), on:false, tipTitle:dLabel(d[0]), extra:[{ label:"근무 인원", value:d[2] + "명" }] }));
+    const dv = lab.days.map(d => d[1]);
+    h += `<div class="grid2"><div class="panel">` + barChart({ id:"c-days", title:"일별 근무시간", unitNote:"전 인원 합계", cats:dcats, catHead:"날짜", noEmphasis:true,
+        series:[{ key:"h", name:"근무시간", color:"var(--s1)", values:dv }], valFmt:v => fmt(v,1)+"시간", capFmt:v => fmt(v), labelIdx:[dv.indexOf(Math.max(...dv))], tickFmt:v => fmt(v) }) + `</div>`;
+    const ws = lab.workers.slice().sort((a,b) => (b.day + b.night) - (a.day + a.night));
+    const hasOther = ws.some(w => w.other);
+    h += `<div class="panel"><h3>사람별 <small>${esc(lab.file)}</small></h3><div class="tw"><table><thead><tr><th>이름</th><th class="n">주간</th><th class="n">야간</th><th class="n">합계</th><th class="n">근무일</th>${hasOther ? `<th class="n">버섯 작업 지원</th>` : ""}</tr></thead><tbody>` +
+      ws.map(w => `<tr><td>${esc(w.name)}</td><td class="n">${fmt(w.day,1)}</td><td class="n">${w.night ? fmt(w.night,1) : ""}</td><td class="n">${fmt(w.day + w.night,1)}</td><td class="n">${w.days}일</td>${hasOther ? `<td class="n">${w.other ? fmt(w.other,1) : ""}</td>` : ""}</tr>`).join("") +
+      `<tr class="sum"><td>합계</td><td class="n">${fmt(sum(ws,"day"),1)}</td><td class="n">${fmt(sum(ws,"night"),1)}</td><td class="n">${fmt(sum(ws, w => w.day + w.night),1)}</td><td></td>${hasOther ? `<td class="n">${fmt(sum(ws,"other"),1)}</td>` : ""}</tr></tbody></table></div></div></div>`;
+  }
+  const mcats = months.map((mm,i) => ({ key:mm, label:mLabel(mm), sub: (i === 0 || mm.slice(5) === "01") ? "’" + mm.slice(2,4) : "", on: mm === M, tipTitle: mLong(mm),
+    extra:[{ label:"인원", value: laborMonths()[mm].workers.filter(w => w.day + w.night > 0).length + "명" }] }));
+  const mv = months.map(mm => sum(laborMonths()[mm].workers, w => w.day + w.night));
+  h += `<div class="grid2 mt"><div class="panel">` + (months.length ? barChart({ id:"c-lab-m", title:"월별 근무시간", unitNote:"가공 인원 합계", cats:mcats, catHead:"월",
+      series:[{ key:"h", name:"근무시간", color:"var(--s1)", values:mv }], valFmt:v => fmt(v,1)+"시간", capFmt:v => fmt(v), labelIdx:[mcats.findIndex(c => c.on)], tickFmt:v => fmt(v) }) : `<p class="empty">근무일지가 없습니다.</p>`) + `</div>`;
+  const roles = LB.roles, shifts = LB.shifts;
+  h += `<div class="panel"><h3>업무 분담 <small>${roles ? esc(mLong(roles.ym)) + " 분담표" : ""}</small></h3>`;
+  if (roles && roles.list.length){
+    const team = n => Object.entries(roles.teams || {}).find(([t,ms]) => ms.includes(n));
+    h += `<div class="tw"><table><thead><tr><th>이름</th><th>조</th><th>맡은 일</th></tr></thead><tbody>` + roles.list.map(r => { const t = team(r.name); return `<tr><td class="nw">${esc(r.name)}</td><td class="nw">${t ? esc(t[0]) : ""}</td><td>${esc(r.role)}</td></tr>`; }).join("") + `</tbody></table></div>`;
+  } else h += `<p class="empty">분담표가 없습니다.</p>`;
+  if (shifts && shifts.list.length){
+    h += `<h3 style="font-size:14px;margin:14px 0 8px">${esc(shifts.title || "근무조")}</h3><div class="tw"><table><tbody>` + shifts.list.map(s => `<tr><td class="nw"><b>${esc(s.team)}</b></td><td class="nw">${esc(s.time)}</td><td>${esc(s.members)}</td></tr>`).join("") + `</tbody></table></div>${shifts.notes && shifts.notes.length ? `<p class="muted small" style="margin:6px 0 0">${esc(shifts.notes.join(" · "))}</p>` : ""}`;
+  }
+  h += `</div></div>`;
+  return h;
+}
+
+/* ───────── 업무일지 ───────── */
+function vLog(){
+  const all = reports().slice().reverse();
+  const months = [...new Set(all.map(r => r.d.slice(0,7)))];
+  const q = S.logQ.trim();
+  let list = all;
+  if (S.logMonth !== "전체") list = list.filter(r => r.d.slice(0,7) === S.logMonth);
+  const shown = (S.logTag === "전체" && !q) ? list : list.map(r => {
+    const lines = r.lines.filter(l => (S.logTag === "전체" || (l.tags || []).includes(S.logTag)) && (!q || l.t.toLowerCase().includes(q.toLowerCase())));
+    return lines.length ? { ...r, lines } : null; }).filter(Boolean);
+  let h = `<div class="head"><div><h2>업무일지</h2><p>일일 업무보고서(한글 파일)를 날짜별로 정리했습니다. 줄마다 내용을 보고 입고·출고·설비 같은 분류를 자동으로 붙였습니다.</p></div></div>`;
+  h += `<div class="logf"><input type="search" id="logQ" placeholder="검색 (예: 감자, 수리, 세스코)" value="${esc(S.logQ)}" aria-label="업무일지 검색">` +
+    `<select id="logMonth" aria-label="기간"><option value="전체">전체 기간</option>${months.map(mm => `<option value="${mm}" ${mm === S.logMonth ? "selected" : ""}>${esc(mLong(mm))}</option>`).join("")}</select></div>`;
+  h += `<div class="logf" role="group" aria-label="분류">${LOG_TAGS.map(t => `<button class="chip" data-tag="${t}" aria-pressed="${S.logTag === t}">${esc(t)}</button>`).join("")}</div>`;
+  h += `<div class="panel"><h3>${shown.length}일치 <small>${(S.D.reports || {}).file ? "파일 수정 " + esc(S.D.reports.file) : ""}</small></h3>`;
+  h += shown.length ? shown.slice(0, S.logLimit).map(r => `<div class="rep"><div class="rd">${esc(dLabel(r.d))}<small>${esc(r.d.slice(0,4))}년${r.by ? " · " + esc(r.by) : ""}</small></div><ul>${r.lines.map(l => `<li class="${l.sub ? "sub" : ""}">${hl(l.t, q)}${tagPills(l.tags)}</li>`).join("")}</ul></div>`).join("") : `<p class="empty">조건에 맞는 기록이 없습니다.</p>`;
+  if (shown.length > S.logLimit) h += `<p style="margin:12px 0 0"><button class="btn" data-act="more">이전 기록 더 보기 (${shown.length - S.logLimit}일 남음)</button></p>`;
+  h += `</div>`;
+  return h;
+}
+
+/* ───────── 자료 ───────── */
+function vSrc(){
+  const meta = S.D.meta || {};
+  const srcs = meta.sources || [];
+  const boiler = (S.D.boiler || {}).months || {};
+  let h = `<div class="head"><div><h2>자료 현황</h2><p>이 현황판은 반가공 업무자료 폴더의 엑셀·한글 파일을 읽어 만듭니다. 마지막 갱신 ${esc(meta.updatedAt || "")}.</p></div></div>`;
+  h += `<div class="panel"><h3>원본 자료별 마지막 기록 <small>매일 쓰는 일지는 ${STALE_DAYS}일 넘게 비면 점검 표시</small></h3><div class="tw"><table class="wide"><thead><tr><th>자료</th><th>영역</th><th class="n">마지막 기록</th><th class="n">경과</th><th>상태</th><th>비고</th></tr></thead><tbody>`;
+  for (const s of srcs){
+    const st = sourceStatus(s);
+    const kind = s.key.startsWith("prod_") ? "작업한 날만 기록" : "건별 서류";
+    h += `<tr><td class="nw">${esc(s.label)}</td><td class="nw">${esc(s.area)}</td><td class="n">${s.latest ? esc(dLabel(s.latest)) : "—"}</td><td class="n">${st.age != null ? st.age + "일" : ""}</td><td>${CONTINUOUS[s.key] ? stalePill(s) : `<span class="pill">${esc(kind)}</span>`}</td><td>${esc(s.note || "")}</td></tr>`;
+  }
+  h += `</tbody></table></div></div>`;
+  const bm = Object.entries(boiler).sort();
+  h += `<div class="grid2 mt"><div class="panel"><h3>보일러 가동 <small>보일러 가동일지</small></h3>` + (bm.length ? `<div class="tw"><table><thead><tr><th>월</th><th class="n">가동일</th><th class="n">가동시간</th><th class="n">경유 주유</th></tr></thead><tbody>` +
+    bm.map(([mm,v]) => `<tr class="${v.last ? "" : "dim"}"><td class="nw">${esc(mLong(mm))}</td><td class="n">${v.days ? v.days + "일" : "—"}</td><td class="n">${v.hours ? fmt(v.hours,1) + "시간" : "—"}</td><td class="n">${v.fuel ? fmt(v.fuel) + "L" : "—"}</td></tr>`).join("") + `</tbody></table></div>` : `<p class="empty">기록이 없습니다.</p>`) + `</div>`;
+  h += `<div class="panel"><h3>자료 갱신</h3><ol class="steps">
+    <li><b>매일 09:00·15:00 자동 갱신</b> — 메인PC의 refresh_all.bat가 업무자료(\\\\jinsung\\반가공\\업무자료)에서 필요한 파일만 <b>다운로드\\반가공자료</b>로 복사한 뒤 이 화면의 자료를 다시 만듭니다.</li>
+    <li>${S.admin ? `바로 반영하려면 이 화면 아래 <b>지금 다시 읽기</b> 버튼을 누릅니다(1분쯤 걸림).` : `바로 반영이 필요하면 관리자 계정에서 <b>지금 다시 읽기</b>를 누르면 됩니다(1분쯤 걸림).`}</li>
+    <li>새 달 파일(예: 10월 근무일지)이 생기면 자동으로 함께 들어옵니다.</li></ol>
+    <p class="note">현황판은 원본 파일을 고치지 않습니다. 숫자가 이상하면 원본 엑셀을 먼저 확인하세요.${meta.source ? ` 읽는 폴더: ${esc(meta.source)}` : ""}${(meta.errors || []).length ? `<br><b>마지막 갱신 때 읽지 못한 자료:</b> ${esc(meta.errors.join(" / "))}` : ""}</p></div></div>`;
+  return h;
+}
+
+/* ───────── 그리기 ───────── */
+function render(){
+  S.tips = {}; S.tipSeq = 0; hideTip();
+  const stamp = $("#stamp");
+  if (S.conn === "ok"){ stamp.className = "stamp"; stamp.textContent = "자료 기준 " + (S.D.meta.updatedAt || ""); }
+  else if (S.conn === "bad"){ stamp.className = "stamp bad"; stamp.textContent = "자료 읽기 오류"; }
+  else if (S.conn === "empty"){ stamp.className = "stamp"; stamp.textContent = "자료 없음"; }
+  else { stamp.className = "stamp"; stamp.textContent = "자료 불러오는 중…"; }
+  const staleN = S.D && S.conn === "ok" ? staleSources().length : 0;
+  $("#tabs").innerHTML = TABS.map(([k,l]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${esc(l)}${k === "src" && staleN ? `<span class="n" aria-label="점검 ${staleN}건">${staleN}</span>` : ""}</button>`).join("");
+  const v = $("#view"), f = $("#filters");
+  if (S.conn !== "ok"){
+    f.hidden = true;
+    v.innerHTML = S.conn === "bad"
+      ? `<p class="banner" style="margin-top:16px">자료를 읽지 못했습니다. ${S.admin ? "아래 '지금 다시 읽기'를 눌러 보세요." : "다음 자동 갱신(09:00·15:00) 때 다시 읽거나, 관리자 계정에서 '지금 다시 읽기'를 누르면 됩니다."}</p>`
+      : S.conn === "empty"
+      ? `<div class="panel mt"><h3>아직 들어온 자료가 없습니다</h3><p class="empty">${S.admin ? "아래 '지금 다시 읽기'를 누르거나 다음" : "다음"} 자동 갱신(09:00·15:00)을 기다리면 생산·매출·재고·구매·인력·업무일지가 채워집니다.</p></div>`
+      : `<div class="panel mt"><p class="empty">자료를 불러오는 중입니다…</p></div>`;
+    return;
+  }
+  if (MONTH_TABS.has(S.tab)){
+    f.hidden = false;
+    const to = S.today.slice(0,7); const ms = []; let m = addMonth(to,-7); while (m <= to){ ms.push(m); m = addMonth(m,1); }
+    f.innerHTML = `<span class="lbl">기간</span>` + ms.map((mm,i) => `<button class="chip" data-month="${mm}" aria-pressed="${mm === S.month}">${i === 0 || mm.slice(5) === "01" ? `<small>${mm.slice(2,4)}년</small> ` : ""}${esc(mLabel(mm))}${mm === to ? `<small>1~${+S.today.slice(8)}일</small>` : ""}</button>`).join("");
+    const on = f.querySelector('[aria-pressed="true"]');
+    if (on && f.scrollWidth > f.clientWidth) f.scrollLeft = Math.max(0, on.offsetLeft + on.offsetWidth - f.clientWidth + 16);
+  } else f.hidden = true;
+  const fn = { home:vHome, prod:vProd, sales:vSales, stock:vStock, buy:vBuy, labor:vLabor, log:vLog, src:vSrc }[S.tab];
+  try { v.innerHTML = fn(); }
+  catch (e){ console.error(e); v.innerHTML = `<p class="banner" style="margin-top:16px">이 화면을 그리다가 문제가 생겼습니다: ${esc(e.message)}</p>`; }
+}
+
+/* ───────── 이벤트 ───────── */
+function goTab(t){ S.tab = t; render(); try { const fe = window.frameElement; if (fe && fe.getBoundingClientRect().top < 0) fe.scrollIntoView({ block:"start" }); } catch(_){} }
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-tab]"); if (t){ goTab(t.dataset.tab); return; }
+  const g = e.target.closest("[data-go]"); if (g){ goTab(g.dataset.go); return; }
+  const m = e.target.closest("[data-month]"); if (m){ S.month = m.dataset.month; render(); return; }
+  const tg = e.target.closest("[data-tag]"); if (tg){ S.logTag = tg.dataset.tag; S.logLimit = 20; render(); return; }
+  const more = e.target.closest('[data-act="more"]'); if (more){ S.logLimit += 20; render(); return; }
+  const tv = e.target.closest('[data-act="tv"]');
+  if (tv){ const id = tv.dataset.id; S.tables[id] = !S.tables[id]; const fig = document.getElementById(id);
+    if (fig){ fig.querySelector(".tw").hidden = !S.tables[id]; tv.textContent = S.tables[id] ? "표 닫기" : "표로 보기"; tv.setAttribute("aria-expanded", String(!!S.tables[id])); } return; }
+});
+let qTimer = null;
+document.addEventListener("input", e => {
+  if (e.target.id !== "logQ") return;
+  clearTimeout(qTimer); const val = e.target.value;
+  qTimer = setTimeout(() => { S.logQ = val; S.logLimit = 20; render(); const el = $("#logQ"); if (el){ el.focus(); el.setSelectionRange(val.length, val.length); } }, 250);
+});
+document.addEventListener("change", e => { if (e.target.id === "logMonth"){ S.logMonth = e.target.value; S.logLimit = 20; render(); } });
+
+/* ───────── 시작 (스트림릿 컴포넌트) ─────────
+   앱(page_banagong.py)이 args.data(JSON 문자열)와 args.stamp 를 넘긴다. 높이는 내용에 맞춰 알린다. */
+function stSend(type, extra){ try { window.parent.postMessage(Object.assign({ isStreamlitMessage:true, type }, extra || {}), "*"); } catch(_){} }
+let lastH = 0;
+function postHeight(){ const r = document.getElementById("root"); if (!r) return; const h = Math.ceil(r.getBoundingClientRect().height) + 4; if (Math.abs(h - lastH) > 1){ lastH = h; stSend("streamlit:setFrameHeight", { height:h }); } }
+const _render0 = render;
+render = function(){ _render0(); requestAnimationFrame(postHeight); };
+function applyData(D){
+  if (!D || !D.meta){ S.D = null; S.conn = "empty"; render(); return; }
+  S.D = D;
+  // 거래명세표에 제품과 함께 청구한 운임·택배비(etc 줄 금액). 매출(공급가액)에 포함되며, 화면에 '포함' 금액으로 따로 적는다
+  for (const s of ((D.sales || {}).statements || [])) s.fee = sum((s.lines || []).filter(l => l.p === "etc"), l => l.amt || 0);
+  S.today = D.meta.today || iso(new Date());
+  if (!S.month || S.month > S.today.slice(0,7)) S.month = S.today.slice(0,7);
+  S.conn = "ok"; render();
+}
+window.addEventListener("message", ev => {
+  const m = ev.data; if (!m || m.type !== "streamlit:render") return;
+  const a = m.args || {};
+  const th = m.theme || {};
+  document.documentElement.setAttribute("data-theme", th.base === "dark" ? "dark" : "light");
+  if (th.backgroundColor) document.documentElement.style.setProperty("--bg", th.backgroundColor);
+  const adm = a.admin !== false, admChanged = adm !== S.admin; S.admin = adm;   // 등급에 따라 안내 문구만 다름
+  if (a.stamp !== S.stamp){ S.stamp = a.stamp; try { applyData(a.data ? JSON.parse(a.data) : null); } catch (e){ console.error(e); S.conn = "bad"; render(); } }
+  else if (admChanged) render();
+  else postHeight();
+});
+try { new ResizeObserver(() => postHeight()).observe(document.getElementById("root")); } catch(_){ window.addEventListener("resize", postHeight); }
+render();
+stSend("streamlit:componentReady", { apiVersion:1 });
+</script>
+</body></html>

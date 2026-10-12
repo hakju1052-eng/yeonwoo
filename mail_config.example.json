@@ -1,0 +1,13 @@
+{
+  "smtp_host": "smtp.naver.com",
+  "smtp_port": 465,
+  "ssl": true,
+  "user": "아이디@naver.com",
+  "password": "메일 앱 비밀번호(네이버: 내정보→보안→2단계인증→애플리케이션 비밀번호 / 지메일: 앱 비밀번호)",
+  "from": "아이디@naver.com",
+  "to": [
+    "받는사람1@naver.com",
+    "받는사람2@gmail.com"
+  ],
+  "min_level": "주의"
+}

@@ -1,0 +1,36 @@
+통합관리 앱 — 여러 사람이 같이 고치는 방법 (GitHub)
+
+■ 구조
+  GitHub 저장소(비공개)  ←→  메인PC  C:\Users\phj\Downloads\unifarm\app  (앱이 실제로 도는 곳)
+  메인PC 는 1분마다(app_watch.ps1) 저장소에서 새 코드를 받아오고(pull), PC 에서 바뀐 파일은 올립니다(push).
+  받아온 코드에 mushroom_app\*.py 가 있으면 20초 뒤 앱을 자동으로 다시 켭니다. 올린 뒤 2분 안에 반영됩니다.
+
+■ 같이 고칠 사람이 할 일 (처음 한 번)
+  1. GitHub 계정을 만들고, 저장소 주인에게 아이디를 알려 초대받기 (저장소 Settings → Collaborators → Add people)
+  2. Git 설치: https://git-scm.com/download/win  (또는 명령창에서  winget install Git.Git)
+  3. 내 PC 에 받기:   git clone https://github.com/<주인아이디>/<저장소이름>.git
+     (처음 올릴 때 브라우저에 GitHub 로그인 창이 뜸)
+
+■ 고칠 때마다
+  1. 받기:   git pull
+  2. 파일 고치기 (mushroom_app\*.py 등). 시험은 내 PC 에서:  python -m streamlit run mushroom_app\app.py
+  3. 올리기:
+       git add -A
+       git commit -m "무엇을 고쳤는지 한 줄"
+       git push
+  4. 1~2분 뒤 메인PC 앱이 다시 켜짐. 메인PC 의 app\watch_log.txt 에 "git pull: received changes" 와 "restart (code updated)" 가 찍힘.
+  * README.txt 맨 위 변경 기록(■ vX.Y.Z)에 무엇을 바꿨는지 같이 적어 주세요. 버전은 mushroom_app\config.py 의 VERSION.
+
+■ 규칙
+  - 비밀 파일은 저장소에 올리지 않습니다 (.gitignore): cluade_api.txt(API 키), mail_config.json, kakao_config.json, users.json(계정), sessions.json,
+    app_log.txt 등 기록, app_cache(자료 캐시). 키·비밀번호를 코드에 적지 마세요.
+  - 메인PC 에서 직접 고친 파일은 1분 안에 자동으로 커밋·올라갑니다("auto: main PC …"). 같은 파일을 두 곳에서 동시에 고쳐 충돌이 나면
+    메인PC 쪽이 이깁니다(-X ours) — 올리기 전에 git pull 을 먼저 하면 거의 안 생깁니다.
+  - 받아오기/올리기가 실패하면 메인PC 의 app\git_log.txt 에 이유가 남습니다(인터넷 끊김, 로그인 만료 등).
+  - 앱이 도는 곳은 메인PC 하나입니다. 자료(app_cache, 스캔 팩스, 일지)는 저장소에 없으니 내 PC 에서는 화면만 시험하고, 자료가 필요한 부분은 메인PC 에서 확인하세요.
+
+■ 메인PC 쪽 설정 (한 번만, 주인이)
+  1. github.com → New repository → Private, README 없이 비어 있게 만들기 (이름 예: unifarm-app)
+  2. app\저장소_연결.bat 실행 → Git 설치(없으면) → 저장소 주소 붙여넣기 → 브라우저 로그인 → 첫 업로드
+     끝나면 app\git_sync.on 파일이 생기고, 그때부터 app_watch.ps1 이 1분마다 동기화합니다.
+  해제: git_sync.on 파일을 지우면 동기화만 멈춥니다(앱 자동 재시작은 그대로).
