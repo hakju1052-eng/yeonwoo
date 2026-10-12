@@ -23,7 +23,7 @@ def _mt(p):
 
 def signature():
     """자료 원본들의 (이름, 수정시각) — 하나라도 바뀌면 다시 계산"""
-    sig = []
+    sig = [("version", getattr(C, "VERSION", ""))]            # 앱이 올라가면(계산 규칙이 바뀌었을 수 있음) 다시 계산
     for f in glob.glob(os.path.join(C.CACHE_DIR, "*.parquet")):
         sig.append((os.path.basename(f), _mt(f)))
     sig.append(("fax/index.json", _mt(os.path.join(C.CACHE_DIR, "fax", "index.json"))))
@@ -56,10 +56,19 @@ def compute():
     try:                                     # 팩스 판매원표 (v1.26.0)
         from . import etl_fax
         FXD, FXL = etl_fax.load()
-        FX = etl_fax.daily(FXD)
         FXS = etl_fax.status()
     except Exception:
-        FXD, FXL, FX, FXS = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+        FXD, FXL, FXS = pd.DataFrame(), pd.DataFrame(), {}
+    SBF = []
+    try:                                     # 서부청과는 경리의 '출하주 판매내역' 엑셀을 경매 자료로 (v1.27.2)
+        from . import etl_seobu
+        FXD, FXL, SBF = etl_seobu.merge_into_fax(FXD, FXL)
+    except Exception:
+        pass
+    try:
+        FX = etl_fax.daily(FXD)
+    except Exception:
+        FX = pd.DataFrame()
     try:                                     # 3단 대조: 일지 출고 → 경매 → 정산 (v1.26.2)
         from . import etl_match
         TW = etl_match.match(MD, FXD, FXL) if len(FXD) and "서명" in FXD else {}
@@ -86,7 +95,7 @@ def compute():
     except Exception:
         UN = pd.DataFrame()
     used = [p for p in [pm, pi, pu] + list(pp) + list(fs) if p]
-    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used,
+    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used, SBF=SBF,
                 made=time.strftime("%Y-%m-%d %H:%M:%S"), secs=round(time.time() - t0, 1))
 
 

@@ -63,8 +63,12 @@ def file_info(path):
     if not m:
         return None
     mm, dd, cc, code = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4).replace(" ", "")
+    both = False
     while code[:1] in ("팽", "새") and code[1:] and code not in MARKET_CODE:      # '새팽대양' 같은 이름
+        both = both or (cc is not None and code[0] != cc)
         cc, code = cc or code[0], code[1:]
+    if both:
+        cc = None                                                                  # 두 작물이 한 팩스 — 작물은 줄마다 품목으로 (v1.27.2)
     if not (1 <= mm <= 12 and 1 <= dd <= 31):
         return None
     try:
@@ -336,7 +340,11 @@ def _shipper(s):
     return s.strip() or "?"
 
 
-def _crop_of(item, default):
+def _crop_of(item, default, force=None):
+    """줄의 작물. force 가 있으면 그것(한 장에 두 작물이 섞여 보일 때 파일 이름의 작물 — 동화청과 0909 정산서처럼 시장이 품목을
+    '버섯(새송이)'로 잘못 찍는 일이 있고, 경리 확인으로 그 20박스는 전날 출하한 팽이였다, v1.27.2). 아니면 품목 글자, 없으면 파일 이름 작물."""
+    if force:
+        return force
     t = str(item or "")
     if "팽이" in t:
         return "팽이"
@@ -370,6 +378,9 @@ def tables(idx=None):
         if not res:
             continue
         fdate = pd.Timestamp(rec["date"])
+        fi = file_info(rec.get("file") or "")
+        if fi is not None:
+            rec = dict(rec, crop=fi[1])              # 파일 이름의 작물은 지금 규칙으로 다시 푼다('새팽대양' → 없음, v1.27.2)
         for si, s in enumerate(res.get("slips") or []):
             try:
                 sd = pd.Timestamp(s.get("date")) if s.get("date") else fdate
@@ -379,6 +390,10 @@ def tables(idx=None):
                 sd = fdate
             lines = s.get("lines") or []
             crops = [_crop_of(l.get("item"), rec.get("crop")) for l in lines] or [rec.get("crop") or "?"]
+            # 한 장에 두 작물이 섞여 보이는데 파일 이름이 한 작물이면 이름을 믿는다(시장이 품목을 잘못 찍은 것). '새팽대양'처럼 이름도 두 작물이면 줄대로.
+            force = rec.get("crop") if ({"팽이", "새송이"} <= set(crops) and rec.get("crop") in ("팽이", "새송이")) else None
+            if force:
+                crops = [force] * len(crops)
             crop = max(set(crops), key=crops.count)
             ok_lines = 0
             for li, l in enumerate(lines):
@@ -387,7 +402,7 @@ def tables(idx=None):
                 # 구리청과 콩알·파지처럼 관당(kg당) 단가를 찍는 줄은 금액 = 수량×단가×(2~10) 도 맞는 것으로 본다
                 good = bool(pd.notna(q) and pd.notna(a) and (pd.isna(p) or abs(q * p - a) < 1 or _multiple(q, p, a)))
                 ok_lines += good
-                L.append({"파일": rec["file"], "장": si, "날짜": sd, "시장": _market(s.get("market"), rec.get("market")), "작물": _crop_of(l.get("item"), rec.get("crop")),
+                L.append({"파일": rec["file"], "장": si, "날짜": sd, "시장": _market(s.get("market"), rec.get("market")), "작물": _crop_of(l.get("item"), rec.get("crop"), force),
                           "출하자": _shipper(s.get("shipper")), "문서": s.get("doc_type") or "", "등급": l.get("grade"), "박스당kg": _num(l.get("unit_kg")),
                           "수량": q, "단가": p, "금액": a, "줄검산": good})
             qs = sum(_num(l.get("qty")) for l in lines if pd.notna(_num(l.get("qty"))))
@@ -409,7 +424,7 @@ def tables(idx=None):
                     "지급검산": "" if net_ok is None else ("맞음" if net_ok else "다름"), "비고": str(s.get("note") or ""), "읽은곳": rec.get("by", "API"), "서명": sig}
             by_crop = {}
             for l in lines:                                   # 한 장에 팽이·새송이가 같이 적힌 정산서는 작물별로 나눈다 (v1.26.5)
-                c_ = _crop_of(l.get("item"), rec.get("crop"))
+                c_ = _crop_of(l.get("item"), rec.get("crop"), force)
                 q_, a_ = _num(l.get("qty")), _num(l.get("amount"))
                 d_ = by_crop.setdefault(c_, {"n": 0, "q": 0.0, "a": 0.0})
                 d_["n"] += 1
@@ -441,8 +456,9 @@ def build(idx=None):
 def load():
     p, q = os.path.join(C.CACHE_DIR, "fax_docs.parquet"), os.path.join(C.CACHE_DIR, "fax_lines.parquet")
     ip = _index_path()
-    if os.path.exists(ip) and (not os.path.exists(p) or os.path.getmtime(ip) > os.path.getmtime(p) + 1):
-        try:                                   # index.json 이 밖에서(예약 직접 판독) 바뀌었으면 표를 다시 만든다 (v1.27.0)
+    newer = max(os.path.getmtime(ip) if os.path.exists(ip) else 0, os.path.getmtime(__file__))     # 색인이 바뀌었거나 이 코드가 바뀌었으면
+    if os.path.exists(ip) and (not os.path.exists(p) or newer > os.path.getmtime(p) + 1):
+        try:                                   # index.json 이 밖에서(예약 직접 판독) 바뀌었거나 읽는 규칙이 바뀌면 표를 다시 만든다 (v1.27.0·v1.27.2)
             return build()
         except Exception:
             pass

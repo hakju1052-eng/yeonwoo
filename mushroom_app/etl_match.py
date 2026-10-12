@@ -330,9 +330,19 @@ def deposits(ST, DEP, win=15):
             dep.loc[list(hit), "짝"] = f"{r['날짜']:%m/%d} 정산(나눠 입금)"
             ST.at[i, "입금액"], ST.at[i, "입금일"], ST.at[i, "입금대조"] = r["지급액"], dep.loc[list(hit), "일시"].max(), "나눠 입금"
             done_grp[gk] = (a, dep.loc[list(hit), "일시"].max(), "나눠 입금")
-        else:
-            ST.at[i, "입금대조"] = "아직 입금 전" if r["날짜"] + pd.Timedelta(days=win) > last else "입금 못 찾음"
-            done_grp[gk] = (np.nan, pd.NaT, ST.at[i, "입금대조"])
+            continue
+        # 가정산(운송비 미공제) 정산서만 오고 본정산이 빠진 날 — 입금은 지급액에서 운송비(만 원 단위, 30만 원까지)를 뺀 금액 (v1.27.2, 대전농협 9/3·9/16 경리 확인)
+        diff = a - c["금액"]
+        fr = c[(diff >= 9999) & (diff <= 300001) & ((diff / 10000).round() * 10000 - diff).abs() < 2]
+        if len(fr):
+            j = fr.index[0]
+            d_ = int(round(a - dep.at[j, "금액"]))
+            dep.at[j, "짝"] = f"{r['날짜']:%m/%d} 정산(운송비 {d_:,}원 차감 추정)"
+            ST.at[i, "입금액"], ST.at[i, "입금일"], ST.at[i, "입금대조"] = dep.at[j, "금액"], dep.at[j, "일시"], f"운송비 차감 추정({d_:,}원)"
+            done_grp[gk] = (dep.at[j, "금액"], dep.at[j, "일시"], ST.at[i, "입금대조"])
+            continue
+        ST.at[i, "입금대조"] = "아직 입금 전" if r["날짜"] + pd.Timedelta(days=win) > last else "입금 못 찾음"
+        done_grp[gk] = (np.nan, pd.NaT, ST.at[i, "입금대조"])
     other = DEP[~DEP["구분"].isin(["", "송금"])].assign(짝=lambda d: d["구분"])
     return ST, pd.concat([dep, other], ignore_index=True).sort_values("일시")
 
@@ -380,7 +390,7 @@ def unified(J, TW, ST, MD, tol=1000):
     keys = ["작물", "시장", "날짜"]
     parts = []
     if J is not None and len(J):
-        j = J[keys + [c for c in ("장부박스", "장부금액", "미정박스", "명세표", "구분") if c in J]].rename(columns={"구분": "명세표상태"})
+        j = J[keys + [c for c in ("장부박스", "장부금액", "미정박스", "명세표", "구분", "팩스박스", "팩스금액") if c in J]].rename(columns={"구분": "명세표상태"})
         parts.append(j)
     S = TW.get("ship") if isinstance(TW, dict) else None
     if S is not None and len(S):
@@ -397,11 +407,13 @@ def unified(J, TW, ST, MD, tol=1000):
         st_ = ST.copy()
         st_["출하일"] = [_ship_of(r.날짜, r.작물, r.시장, MD) for r in st_.itertuples()]
         rank = {"입금 못 찾음": 3, "아직 입금 전": 2, "나눠 입금": 1, "일치": 1, "추정 확인": 0.5, "지급액 없음": 0, "입금 자료 없음": 0, "": 0}
-        st_["_r"] = st_["입금대조"].map(rank).fillna(0)
+        st_["_r"] = st_["입금대조"].map(rank)
+        st_.loc[st_["입금대조"].astype(str).str.startswith("운송비 차감 추정"), "_r"] = 0.7
+        st_["_r"] = st_["_r"].fillna(0)
         s1 = lambda x: x.sum(min_count=1)
         g = st_.groupby(["작물", "시장", "출하일"]).agg(판매대금=("판매대금", s1), 수수료=("수수료", s1), 지급액=("지급액", s1),
                                                      입금액=("입금액", s1), _r=("_r", "max")).reset_index().rename(columns={"출하일": "날짜"})
-        g["입금상태"] = g["_r"].map({3: "입금 못 찾음", 2: "아직 입금 전", 1: "입금 확인", 0.5: "입금 확인(추정)", 0: ""})
+        g["입금상태"] = g["_r"].map({3: "입금 못 찾음", 2: "아직 입금 전", 1: "입금 확인", 0.7: "입금 확인(운송비 차감)", 0.5: "입금 확인(추정)", 0: ""})
         U = U.merge(g.drop(columns="_r"), on=keys, how="left")
     for c in ("출고박스", "장부박스", "장부금액", "미정박스", "명세표", "확인박스", "미확인박스", "경매금액", "판매대금", "수수료", "지급액", "입금액"):
         if c not in U:
@@ -412,12 +424,15 @@ def unified(J, TW, ST, MD, tol=1000):
         U[c] = U[c].fillna("")
     # 팩스(정산서)가 시작되기 전 출하는 경매·입금을 건별로 맞출 수 없다 — 빈 칸 대신 그렇게 적는다
     F_ = TW.get("fax") if isinstance(TW, dict) else None
-    fax_start = (F_["판매일"].min() - pd.Timedelta(days=1)) if F_ is not None and len(F_) else None
-    if fax_start is not None:
-        pre = U["날짜"] < fax_start
+    if F_ is not None and len(F_):
+        # 시장(작물)마다 팩스(또는 서부청과 엑셀)가 시작된 날이 다르다 — 그 전 출하는 '팩스 전' (v1.27.2: 시장별)
+        first = (F_.groupby(["작물", "시장"])["판매일"].min() - pd.Timedelta(days=1))
+        U["_fs"] = [first.get((c, m), pd.NaT) for c, m in zip(U["작물"], U["시장"])]
+        pre = U["_fs"].isna() | (U["날짜"] < U["_fs"])
         U.loc[pre & (U["팩스상태"] == ""), "팩스상태"] = "팩스 전"
-        U.loc[pre & (U["입금상태"] == ""), "입금상태"] = f"팩스 전({fax_start:%m/%d}~)"
+        U.loc[pre & (U["입금상태"] == ""), "입금상태"] = ["팩스 전" + (f"({d:%m/%d}~)" if pd.notna(d) else "") for d in U.loc[pre & (U["입금상태"] == ""), "_fs"]]
         U.loc[~pre & (U["입금상태"] == "") & U["지급액"].isna(), "입금상태"] = "정산서 없음"
+        U = U.drop(columns=["_fs"])
     U["출고박스"] = U["출고박스"].fillna(U["장부박스"])
     U["재정산"] = U["재정산"].astype("boolean").fillna(False).astype(bool) if "재정산" in U else False
 
@@ -430,8 +445,14 @@ def unified(J, TW, ST, MD, tol=1000):
             msg = f"{r['미확인박스']:,.0f}박스는 {r.get('넘긴경매일', '')} 경매분(장부 비고) — 그날 팩스만 없음"
             (ref if s == "일치" else red).append(msg + (" · 장부·명세표 금액은 일치" if s == "일치" else ""))
         elif f == "일부 미확인":
+            led_, stm_, fxa_, fxb_ = r["장부금액"], r["명세표"], r.get("팩스금액"), r.get("팩스박스")
+            same_box = pd.notna(fxb_) and abs(fxb_ - (r["출고박스"] or 0)) < 0.5
             if s == "일치":          # 돈(명세표=장부)은 맞고 팩스 줄 단위(kg 단가·작은 상자)가 달라 박스만 못 맞춘 것
                 ref.append(f"팩스와 박스 단위가 달라 {r['미확인박스']:,.0f}박스 못 맞춤(금액은 명세표와 같음)")
+            elif same_box and pd.notna(stm_) and pd.notna(fxa_) and abs(stm_ - fxa_) <= tol:
+                # 박스 수는 팩스와 같고 명세표도 팩스와 같다 — 장부에 단가를 잘못 적은 것 (서울 9/13: 장부 13,500 / 팩스 13,000, 경리 확인)
+                ref.append(f"장부 단가 입력 차이({r['미확인박스']:,.0f}박스, 장부가 팩스보다 {(led_ or 0) - (fxa_ or 0):+,.0f}원) — 명세표는 팩스와 일치")
+                s = "_단가차이"
             else:
                 red.append(f"경매에서 {r['미확인박스']:,.0f}박스 확인 안 됨")
         elif f == "장부 단가 미정":
@@ -442,6 +463,8 @@ def unified(J, TW, ST, MD, tol=1000):
             wait.append("아직 입금 전")
         elif d == "입금 확인(추정)":
             ref.append("정산서 없음 — 경락액×평소 수수료율로 입금 확인")
+        elif d == "입금 확인(운송비 차감)":
+            ref.append(f"본정산 없이 가정산만 옴 — 지급액에서 운송비 {((r['지급액'] or 0) - (r['입금액'] or 0)):,.0f}원을 뺀 입금 확인")
         elif d == "정산서 없음" and f not in ("팩스 없음", "넘긴 경매 팩스 없음"):
             wait.append("정산서 없음(판매원표만 옴)")
         led, stm, auc = r["장부금액"], r["명세표"], r["경매금액"]
@@ -475,7 +498,37 @@ def unified(J, TW, ST, MD, tol=1000):
         U[c] = U[c].round(0)
     out = U.apply(judge, axis=1, result_type="expand")
     U["등급"], U["문제"] = out[0], out[1]
+    U = _offset_pairs(U)
     return U.sort_values(["날짜", "작물", "시장"]).reset_index(drop=True)
+
+
+def _offset_pairs(U, days=7):
+    """명세표 금액 차이가 같은 시장·작물의 7일 안 다른 날과 +x / −x 로 상쇄되면 — 경리가 일부 박스를 다른 경매일에 입력한 것
+    (구리 9/8 +15,000 · 9/11 −15,000: 새송이 2kg 30박스를 9/12 경매로 입력, 경리 확인) → 🔴 대신 🟡 (v1.27.2)"""
+    if U is None or U.empty or "문제" not in U:
+        return U
+    pat = r"명세표 금액 다름\(([+-][\d,]+)원\)"
+    X = U[U["문제"].astype(str).str.contains(pat, regex=True)].copy()
+    if X.empty:
+        return U
+    X["_d"] = X["문제"].astype(str).str.extract(pat)[0].str.replace(",", "").astype(float)
+    used = set()
+    for i, r in X.iterrows():
+        if i in used:
+            continue
+        c = X[(X["작물"] == r["작물"]) & (X["시장"] == r["시장"]) & (X.index != i) & ~X.index.isin(used)
+              & ((X["날짜"] - r["날짜"]).abs() <= pd.Timedelta(days=days)) & ((X["_d"] + r["_d"]).abs() < 1)]
+        if c.empty:
+            continue
+        j = c.index[0]
+        used.update([i, j])
+        for a, b in ((i, j), (j, i)):
+            msg = f"명세표 입력 날짜 차이({X.at[a, '_d']:+,.0f}원 — {U.at[b, '날짜']:%m/%d}와 상쇄)"
+            parts = [x for x in str(U.at[a, "문제"]).split(" · ") if "명세표 금액 다름" not in x]
+            U.at[a, "문제"] = " · ".join([msg] + parts)
+            if U.at[a, "등급"] == "확인" and not any(("못 찾음" in x) or ("확인 안 됨" in x) or ("팩스 없음" in x) or ("없음(" in x) for x in parts):
+                U.at[a, "등급"] = "참고"
+    return U
 
 
 def fill_by_ledger(U, DM, win=16, tol=0.012):
