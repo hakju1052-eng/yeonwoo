@@ -711,7 +711,8 @@ def page_anomalies(ver):
 - **배양 불량률**: 주간 균긁기 불량률 팽이 >{R['scrape_bad_paengi']}%, 새송이 >{R['scrape_bad_ss']}% (기준의 {R['scrape_high_mult']:g}배 이상이면 높음); 권지 불량률 >{R['kwonji_bad']}%
 - **배양실**: 습도 {R['cult_hum']}% 초과, 또는 설정과 온도가 {R['cult_temp_c']:g}°C 넘게 차이 나는 날이 최근 {R['cult_days']}일 이상 (배양실2는 평소 1.3°C 낮게 운전)
 - **입상 병수**: 새송이 방당 병수가 같은 동(A~D) 최근 120일 중앙값에서 ±{R['ss_bottles_tol']:.0%} 넘게 벗어남 (동마다 방 크기가 다름)
-- **냉각 느림·과냉**: 평소(같은 방·같은 솥수)의 {R['cool_slow_ratio']:g}배 이상이면서 {R['cool_slow_add_min']}분 넘게 늦게 식음 / 설정보다 {R['overcool_c']:g}℃ 넘게 낮은 시간이 하루 {R['overcool_min']}분 이상
+- **접종 배지온도**: 종합관리의 솥별 접종온도가 {R['inoc_temp_low']:g}\\~{R['inoc_temp_high']:g}℃ 밖이면 중간, {R['inoc_temp_low_hi']:g}℃ 미만·{R['inoc_temp_high_hi']:g}℃ 초과면 높음 (2026년 실측 중앙 14.5℃). 접종일·작물별 한 줄에 순번과 온도를 적습니다 — 과냉(너무 차가움)·덜 식음(너무 뜨거움)
+- **냉각 느림·과냉**: 평소(같은 방·같은 솥수)의 {R['cool_slow_ratio']:g}배 이상이면서 {R['cool_slow_add_min']}분 넘게 늦게 식음 / 설정보다 {R['overcool_c']:g}℃ 넘게 낮은 시간이 하루 {R['overcool_min']}분 이상. 냉각실은 자체 시스템이 제어하고 uni-farm 센서는 모니터링용이라 과냉은 **낮음**(참고)으로만 표시
 - 감시 제외 방: {', '.join(sorted(C.MONITOR_EXCLUDE))} (창고 등 재배와 무관한 용도)
 - **최근 수리**: 같은 방의 수리 기록(기계수리.xlsx) 중 그 날짜 앞뒤 30일 안의 것. 고친 날 전부터 문제가 있었을 수 있어 뒤쪽도 봅니다. 배양 불량률 줄('배양실')은 배양실1·2를 함께 봅니다.
 """)
@@ -1399,17 +1400,17 @@ def page_checklist(ver):
     stale = [k for k, v in lastlog.items() if v is None or (first - v).days >= 3]
     k3.metric("3일 이상 기록 없는 항목", f"{len(stale)}개", ", ".join(stale[:3]) + (" 외" if len(stale) > 3 else "") if stale else "없음", delta_color="inverse" if stale else "off")
 
-    # 공정 경고: 냉각 느림 · 냉각실 과냉 · 살균 지연
+    # 공정 경고: 접종 배지온도 · 냉각 느림 · 냉각실 과냉 · 살균 지연
     PA = load_process_alerts(ver, str(dates[-1].date()), str(first.date()))
     st.subheader(f"공정 경고 (최근 {days}일)")
     if len(PA):
         p0 = PA[PA["날짜"] == first.date()]
-        st.caption(f"{first:%m/%d} {len(p0)}건 · 최근 {days}일 {len(PA)}건 — 냉각실 1분 곡선과 솥 단위 기록에서 자동 판정")
+        st.caption(f"{first:%m/%d} {len(p0)}건 · 최근 {days}일 {len(PA)}건 — 솥 단위 기록(접종 배지온도·살균)과 냉각실 1분 곡선에서 자동 판정")
         SEV = {"높음": "🔴", "중간": "🟠", "낮음": "🟡"}
         Vp = PA.copy(); Vp["날짜"] = pd.to_datetime(Vp["날짜"]).dt.strftime("%m/%d"); Vp["심각도"] = Vp["심각도"].map(lambda x: SEV.get(x, "") + " " + x)
         st.dataframe(Vp[["날짜", "심각도", "분류", "방", "내용"]], hide_index=True, **_FULL, height=60 + 35 * min(len(Vp), 12))
     else:
-        st.success(f"최근 {days}일 냉각 느림·과냉·살균 지연 없음")
+        st.success(f"최근 {days}일 접종 배지온도·냉각 느림·과냉·살균 지연 없음")
 
     st.subheader(f"{first:%m/%d (%a)} 항목별 기록")
     V = T[["구분", "항목", first]].copy()

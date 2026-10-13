@@ -2258,7 +2258,7 @@ def sterilization_delays(P, L=None, CY=None):
 
 
 def process_alerts(d1, d2, E=None, L=None):
-    """냉각·살균 공정 경고 (d1~d2 날짜, 양끝 포함): 냉각 느림 / 냉각실 과냉 / 살균 지연(입병 끝→살균 시작, 승온 늦음).
+    """냉각·살균·접종 공정 경고 (d1~d2 날짜, 양끝 포함): 냉각 느림 / 냉각실 과냉(낮음) / 살균 지연(입병 끝→살균 시작, 승온 늦음) / 접종 배지온도.
     반환 DataFrame [날짜, 분류, 방, 내용, 값, 심각도]"""
     d1, d2 = pd.Timestamp(d1).normalize(), pd.Timestamp(d2).normalize()
     out = []
@@ -2280,8 +2280,9 @@ def process_alerts(d1, d2, E=None, L=None):
         for (room, d), g in u.groupby(["room", u.ts.dt.normalize()]):
             if len(g) >= COOL_UNDER_MIN:
                 i = g["temp"].idxmin()
-                out.append({"날짜": d.date(), "분류": "냉각실 과냉", "방": room, "심각도": "중간",
-                            "내용": f"설정 {g['sp'].median():.0f}℃보다 {COOL_UNDER:.0f}℃ 넘게 낮은 시간 {len(g) // 60}시간 {len(g) % 60:02d}분 (최저 {g.loc[i, 'temp']:.1f}℃ {g.loc[i, 'ts']:%H:%M}). 과냉.", "값": int(len(g))})
+                # 냉각실은 자체 시스템이 제어하고 uni-farm 센서는 모니터링용 — 실제 문제는 접종 때 배지온도로 본다(아래 '접종 배지온도') (v1.30.0)
+                out.append({"날짜": d.date(), "분류": "냉각실 과냉", "방": room, "심각도": "낮음",
+                            "내용": f"설정 {g['sp'].median():.0f}℃보다 {COOL_UNDER:.0f}℃ 넘게 낮은 시간 {len(g) // 60}시간 {len(g) % 60:02d}분 (최저 {g.loc[i, 'temp']:.1f}℃ {g.loc[i, 'ts']:%H:%M}) — uni-farm 모니터링 센서 기준, 참고용.", "값": int(len(g))})
     # 살균 지연 (솥 단위 기록)
     try:
         L = loads_with_cycles() if L is None else L
@@ -2300,5 +2301,40 @@ def process_alerts(d1, d2, E=None, L=None):
             if r["승온이슈"]:
                 out.append({"날짜": pd.Timestamp(r["입병일"]).date(), "분류": "살균 지연", "방": unit, "심각도": "중간",
                             "내용": f"{crop}순번{int(r['입병순번']) if pd.notna(r['입병순번']) else '?'}: 100℃까지 {r['승온분']:.0f}분 (평소 {r['승온평소']:.0f}분). 승온 지연(밀폐·압력 의심).", "값": int(r["승온분"])})
+        out += inoc_temp_alerts(L, d1, d2)
     A = pd.DataFrame(out, columns=["날짜", "분류", "방", "심각도", "내용", "값"])
     return A.sort_values(["날짜", "분류"], ascending=[False, True]).reset_index(drop=True) if len(A) else A
+
+
+def inoc_temp_alerts(L, d1, d2):
+    """접종 시 배지온도 (종합관리 '접종온도', 솥 단위) — 너무 차갑거나(과냉) 덜 식은 채 접종한 솥을 접종일·작물별 한 줄로 (v1.30.0).
+    기준: RULES inoc_temp_low~high 밖이면 중간, inoc_temp_low_hi 미만·inoc_temp_high_hi 초과면 높음."""
+    R = C.RULES
+    lo, hi = R.get("inoc_temp_low", 13.0), R.get("inoc_temp_high", 16.0)
+    lo2, hi2 = R.get("inoc_temp_low_hi", 12.0), R.get("inoc_temp_high_hi", 17.0)
+    if L is None or L.empty or "접종온도" not in L or "접종일" not in L:
+        return []
+    X = L.copy()
+    X["접종일"] = pd.to_datetime(X["접종일"], errors="coerce")
+    X["접종온도"] = pd.to_numeric(X["접종온도"], errors="coerce")
+    X = X[(X["접종일"] >= d1) & (X["접종일"] <= d2) & X["접종온도"].notna()]
+    out = []
+    for (crop, d), g in X.groupby(["crop", "접종일"]):
+        bad = g[(g["접종온도"] < lo) | (g["접종온도"] > hi)].sort_values("입병순번")
+        if bad.empty:
+            continue
+        cold, hot = bad[bad["접종온도"] < lo], bad[bad["접종온도"] > hi]
+        sev = "높음" if ((bad["접종온도"] < lo2) | (bad["접종온도"] > hi2)).any() else "중간"
+        sq = lambda b: "·".join(f"{int(n)}" if pd.notna(n) else "?" for n in b["입병순번"])
+        tv = lambda b: "·".join(f"{t:.1f}" for t in b["접종온도"])
+        parts = []
+        if len(hot):
+            parts.append(f"덜 식음 — 순번 {sq(hot)} 배지 {tv(hot)}℃")
+        if len(cold):
+            parts.append(f"과냉 — 순번 {sq(cold)} 배지 {tv(cold)}℃")
+        inb = pd.to_datetime(g["입병일"]).min()
+        val = float(hot["접종온도"].max()) if len(hot) else float(cold["접종온도"].min())
+        out.append({"날짜": d.date(), "분류": "접종 배지온도", "방": f"{crop} 접종", "심각도": sev,
+                    "내용": f"{inb:%m/%d} 입병분 {len(g)}솥 중 {len(bad)}솥: " + " / ".join(parts)
+                            + f" (기준 {lo:g}~{hi:g}℃, 그날 범위 {g['접종온도'].min():.1f}~{g['접종온도'].max():.1f}℃)", "값": val})
+    return out
