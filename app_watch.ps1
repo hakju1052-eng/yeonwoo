@@ -71,6 +71,8 @@ try {
     $syncStamp = Join-Path $app 'synocopy.stamp'
     $due = -not (Test-Path $syncStamp)
     if (-not $due) { $due = ((Get-Date) - (Get-Item $syncStamp).LastWriteTime).TotalMinutes -ge 60 }
+    $sflag = Join-Path $app 'SYNC_REQUEST.txt'          # copy right now when asked (remote session / person)
+    if (Test-Path $sflag) { Remove-Item $sflag -Force; $due = $true }
     if ($due) {
         $vbs = Get-ChildItem -Path $dl -Filter 'SynologyDrive_*.vbs' -File | Select-Object -First 1
         if ($vbs) {
