@@ -101,10 +101,12 @@ PRODUCTS = {
     'mattang':  {'name': '생고구맛탕칩', 'unit': '봉', 'kind': '고구마칩'},
     'stick':    {'name': '고구마스틱', 'unit': '', 'kind': '고구마 반가공'},
     'cube':     {'name': '허니맛탕큐브', 'unit': '', 'kind': '고구마 반가공'},
+    'costino':  {'name': '코스티노 올리브유 감자칩', 'unit': '봉', 'kind': '감자칩'},   # 2026-10 새 제품(올리브유 감자칩 위탁생산)
 }
 
 def product_of_title(title):
     t = norm(title)
+    if '코스티노' in t or '올리브유감자칩' in t: return 'costino'
     if '크런틴' in t: return 'crunteen'
     if '호미칩' in t: return 'homi'
     if '달콤바삭' in t: return 'dalkom'
@@ -169,6 +171,10 @@ def classify(path):
         return ('note', None)
     if '파렛트' in h:
         return ('pallet', None)
+    if '전처리' in h and '반제품' in h:      # 코스티노: '전처리 반제품'(전처리해서 만든 반제품 kg) — 사용량과 따로
+        return ('semiMade', None)
+    if '반제품' in h and '재고' in h:        # 코스티노: '재고(반제품)'
+        return ('semi', None)
     if '전처리' in h:
         return ('preUse', None)
     if '가공횟수' in h:
@@ -210,7 +216,7 @@ def classify(path):
         return ('stock', variant)
     return None
 
-SUM_METRICS = ('rawIn', 'preUse', 'batches', 'procUse', 'oilIn', 'oilUse', 'fuel',
+SUM_METRICS = ('rawIn', 'preUse', 'semiMade', 'batches', 'procUse', 'oilIn', 'oilUse', 'fuel',
                'packBox', 'pack', 'ship', 'workHours', 'yIn', 'yOut', 'yGood', 'yBad')
 
 def parse_log_sheet(sh, yymm):
@@ -355,7 +361,7 @@ def build_production(products, today):
     out = []
     daily = []
     raw_stock = {}
-    for key in ['crunteen', 'homi', 'dalkom', 'mattang', 'stick', 'cube']:
+    for key in ['crunteen', 'costino', 'homi', 'dalkom', 'mattang', 'stick', 'cube']:
         if key not in products:
             continue
         pr = products[key]
@@ -1302,6 +1308,7 @@ def parse_reports_xlsx(src):
     if not files:
         return None
     reports, stamps = [], []
+    files.sort(key=lambda f: os.path.getmtime(f))     # 같은 날짜 시트가 두 파일에 있으면 나중에 고친 파일 것이 이기게 (2610 새 파일 > 옛 파일)
     for path in files:
         wb = load(path)
         for ws in wb.worksheets:

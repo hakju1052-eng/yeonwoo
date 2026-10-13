@@ -12,7 +12,7 @@ html,body{margin:0;padding:0}
   --ok:#2C7A4B; --ok-soft:#DCEFE2; --warn:#B4530F; --warn-soft:#FBE8D6; --bad:#B42318; --bad-soft:#FADFDB;
   --btn:#1C231F; --btn-ink:#F2F3EE;
   --viz-muted:#C8CCC2;
-  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#7a5bd6;
   --shadow:0 1px 2px rgba(28,35,31,.06),0 8px 28px rgba(28,35,31,.10);
   --f-body:"Source Sans Pro","Source Sans 3",-apple-system,"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
   --f-mono:ui-monospace,"SFMono-Regular",Consolas,monospace;
@@ -24,7 +24,7 @@ html,body{margin:0;padding:0}
   --accent:#E3A642; --accent-soft:#3A2D15;
   --ok:#62C38B; --ok-soft:#1B3427; --warn:#F09A5A; --warn-soft:#3A2617; --bad:#F2796B; --bad-soft:#3E201C;
   --btn:#E7ECE6; --btn-ink:#141916; --viz-muted:#3F4A44;
-  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9a82ea;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.4);
   color-scheme:dark}}
 :root[data-theme="dark"]{
@@ -33,7 +33,7 @@ html,body{margin:0;padding:0}
   --accent:#E3A642; --accent-soft:#3A2D15;
   --ok:#62C38B; --ok-soft:#1B3427; --warn:#F09A5A; --warn-soft:#3A2617; --bad:#F2796B; --bad-soft:#3E201C;
   --btn:#E7ECE6; --btn-ink:#141916; --viz-muted:#3F4A44;
-  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9a82ea;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.4);
   color-scheme:dark}
 *{box-sizing:border-box}
@@ -225,12 +225,12 @@ ol.steps{margin:0;padding-left:20px;display:grid;gap:6px;font-size:14px}
 /* ───────── 기본 설정 ───────── */
 const DOCS = { meta:"meta/info", prod:"prod/summary", daily:"prod/daily", sales:"sales/all", purchase:"purchase/all",
   ledgers:"stock/ledgers", labor:"labor/all", boiler:"equip/boiler", reports:"reports/all" };
-const PROD_ORDER = ["crunteen","homi","dalkom","mattang","stick","cube"];
-const PNAME = { crunteen:"크런틴", homi:"호미칩", dalkom:"달콤바삭 고구마칩", mattang:"생고구맛탕칩", stick:"고구마스틱", cube:"허니맛탕큐브",
+const PROD_ORDER = ["crunteen","costino","homi","dalkom","mattang","stick","cube"];
+const PNAME = { crunteen:"크런틴", costino:"코스티노 올리브유 감자칩", homi:"호미칩", dalkom:"달콤바삭 고구마칩", mattang:"생고구맛탕칩", stick:"고구마스틱", cube:"허니맛탕큐브",
   sweet:"스윗구마칩", etc:"운임·파레트 등", other:"기타", fee:"운임·택배" };
-const PUNIT = { crunteen:"봉", homi:"봉", dalkom:"봉", mattang:"봉", stick:"", cube:"개" };
-const PCOLOR = { crunteen:"var(--s1)", homi:"var(--s2)", dalkom:"var(--s3)", mattang:"var(--s4)", stick:"var(--s5)", cube:"var(--s6)" };
-const BONG = new Set(["crunteen","homi","dalkom","mattang"]);
+const PUNIT = { crunteen:"봉", costino:"봉", homi:"봉", dalkom:"봉", mattang:"봉", stick:"", cube:"개" };
+const PCOLOR = { crunteen:"var(--s1)", costino:"var(--s7)", homi:"var(--s2)", dalkom:"var(--s3)", mattang:"var(--s4)", stick:"var(--s5)", cube:"var(--s6)" };
+const BONG = new Set(["crunteen","costino","homi","dalkom","mattang"]);
 const TABS = [["home","한눈에"],["prod","생산"],["sales","매출·출고"],["stock","재고"],["buy","구매"],["labor","인력"],["log","업무일지"],["src","자료"]];
 const MONTH_TABS = new Set(["home","prod","sales","buy","labor"]);
 const CONTINUOUS = { labor:1, ledger_sub:1, ledger_pack:1, boiler:1, reports:1 };
@@ -502,6 +502,7 @@ function vProd(){
     const unit = PUNIT[k], idle = !r.length;
     h += `<div class="panel pcard${idle ? " idle" : ""}"><div class="ph">${sw(k)}<b>${esc(PNAME[k])}</b><span class="pill">${esc(p.kind)}</span>${idle ? `<span class="pill">이달 작업 없음</span>` : ""}<span class="last">최근 작업 ${p.lastActivity ? esc(dShort(p.lastActivity)) : "—"}</span></div>`;
     h += `<div class="mgrid">` + m("원물 입고", v.rawIn, "kg") + m("가공 사용", v.proc, "kg") + m("가공 횟수", v.batches, "회") + m("유지 사용", v.oil, "캔") +
+      (k === "costino" ? m("전처리 반제품", sum(r, x => keySum(x,"semiMade")), "kg") : "") +
       (k === "stick" ? "" : m("포장", v.pack, unit) + m("출고", v.ship, unit)) + `</div>`;
     if (k === "crunteen"){
       const fr = (p.variants || []).map(f => ({ f, pack: sum(r, x => x["pack|"+f] || 0), ship: sum(r, x => x["ship|"+f] || 0), st: (p.stock || {})[f] }));
