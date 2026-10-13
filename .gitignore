@@ -34,3 +34,4 @@ git_sync.on
 git_fail.flag
 office_log.txt
 office_started.stamp
+synocopy.stamp

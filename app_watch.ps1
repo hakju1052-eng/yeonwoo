@@ -1,6 +1,7 @@
 # Auto restart for the farm app (Streamlit). Run every minute by Task Scheduler via app_watch.vbs.
 # Restarts the app when any mushroom_app\*.py file is newer than the last start,
 # or when RESTART_REQUEST.txt exists. Also starts the app if it is not running.
+# Also starts the Synology scan-folder copy every 60 minutes (synocopy.stamp).
 # If git_sync.on exists (made by the GitHub setup bat), it also commits/pulls/pushes with GitHub every minute,
 # so code pushed by anyone arrives here and is restarted within ~2 minutes.
 $ErrorActionPreference = 'SilentlyContinue'
@@ -61,6 +62,22 @@ try {
                 }
             }
         } finally { Pop-Location }
+    }
+
+    # ---- Synology copy (Z: scan folder -> Downloads copy) every 60 min ----
+    # The separate Task Scheduler entry for the copy did not fire, so the watcher (which runs every minute) starts it.
+    # It runs the copy .vbs in Downloads (SynologyDrive_*.vbs) hidden; the .bat writes its own log in Downloads\SynologyDrive_*\.
+    $dl = Split-Path -Parent (Split-Path -Parent $app)
+    $syncStamp = Join-Path $app 'synocopy.stamp'
+    $due = -not (Test-Path $syncStamp)
+    if (-not $due) { $due = ((Get-Date) - (Get-Item $syncStamp).LastWriteTime).TotalMinutes -ge 60 }
+    if ($due) {
+        $vbs = Get-ChildItem -Path $dl -Filter 'SynologyDrive_*.vbs' -File | Select-Object -First 1
+        if ($vbs) {
+            Set-Content -Path $syncStamp -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $vbs.FullName + '"') -WindowStyle Hidden
+            Log 'synology copy started'
+        }
     }
 
     # ---- apps: main app (app_port.txt, default 8501) + management-data app (office_port.txt, default 8502) ----
