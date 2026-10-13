@@ -29,7 +29,7 @@ def main():
         print(f"반가공 현황: 건너뜀 ({e})")
     t4 = time.time()
     try:   # 팩스 판매원표(경리 SynologyDrive\스캔) — 새 파일만 AI 로 읽음 (v1.26.0)
-        from . import etl_fax, ai_chat, config as C
+        from . import etl_fax, ai_chat          # config 는 위에서 이미 C 로 들여옴 — 여기서 다시 들여오면 main() 안의 C 가 지역변수가 돼 첫 줄에서 깨짐 (v1.29.5 고침)
         if getattr(C, "FAX_AUTO_API", False) and ai_chat.api_key():
             n_f, left = etl_fax.run(progress=lambda s: print("  " + s, flush=True))
             print(f"팩스 판매원표: {n_f}개 읽음, 남은 {left}개 ({time.time()-t4:.0f}초)")

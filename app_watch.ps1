@@ -80,6 +80,18 @@ try {
         }
     }
 
+    # ---- data refresh on request: REFRESH_REQUEST.txt in the app folder -> run Downloads\refresh_all.bat hidden ----
+    # (lets a remote session or a person trigger the 09:00/15:00 refresh without waiting for the scheduler)
+    $rflag = Join-Path $app 'REFRESH_REQUEST.txt'
+    if (Test-Path $rflag) {
+        Remove-Item $rflag -Force
+        $rbat = Join-Path $dl 'refresh_all.bat'
+        if (Test-Path $rbat) {
+            Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"' + $rbat + '"') -WorkingDirectory $dl -WindowStyle Hidden
+            Log 'data refresh started (REFRESH_REQUEST.txt)'
+        } else { Log 'REFRESH_REQUEST.txt found but refresh_all.bat missing' }
+    }
+
     # ---- apps: main app (app_port.txt, default 8501) + management-data app (office_port.txt, default 8502) ----
     $files  = Get-ChildItem -Path (Join-Path $app 'mushroom_app') -Recurse -Filter *.py | Where-Object { $_.FullName -notmatch '__pycache__' }
     $newest = ($files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
