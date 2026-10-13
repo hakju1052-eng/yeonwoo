@@ -1318,6 +1318,89 @@ def parse_reports_xlsx(src):
         stamps.append(mtime(path))
     return {'reports': reports, 'file': max(stamps)}
 
+# ───────────────────────── 7-3. 일간 작업지시서 (2026-10~) ─────────────────────────
+# 근무조 편성 및 작업지시서\*작업지시서*.xlsx — 시트 하나 = 하루. '2026년 10월 06일 (화) | 근무시간 08:00 ~ 18:30',
+#  표 머리 '시간 | 구분 | 작업 내용 | 작업자', 아래 '-특이사항 및 전달사항-' 칸(* 로 시작하는 줄, 들여쓴 줄은 앞 줄의 세부).
+# 파일을 날마다 덮어써도 지난 날짜가 남도록 이전 결과(reports__all.json 의 orders)와 합친다.
+def _order_sheet(sh):
+    d = hours = None
+    hr = None
+    for r in range(1, min(sh.max_row, 10) + 1):
+        for c in range(1, min(sh.max_col, 8) + 1):
+            t = sh.raw(r, c)
+            if t is None:
+                continue
+            t = str(t)
+            m = re.search(r'(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일', t)
+            if d is None and m:
+                try:
+                    d = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                except ValueError:
+                    pass
+                mh = re.search(r'근무\s*시간\s*:?\s*([0-9:]+\s*~\s*[0-9:]+)', t)
+                if mh:
+                    hours = re.sub(r'\s+', ' ', mh.group(1))
+        if hr is None:
+            heads = [norm(sh.raw(r, c)) for c in range(1, min(sh.max_col, 8) + 1)]
+            if '시간' in heads and any('작업' in h_ for h_ in heads):
+                hr = r
+                cols = {}
+                for i, h_ in enumerate(heads, start=1):
+                    if h_ == '시간': cols['time'] = i
+                    elif h_ == '구분': cols['kind'] = i
+                    elif '작업내용' in h_ or h_ == '내용': cols['task'] = i
+                    elif '작업자' in h_ or '담당' in h_: cols['who'] = i
+    if d is None or hr is None:
+        return None
+    rows, notes = [], []
+    for r in range(hr + 1, sh.max_row + 1):
+        first = sh.raw(r, 1)
+        ft = str(first or '').strip()
+        if '특이사항' in ft or '전달사항' in ft:
+            for raw in ft.split('\n'):
+                t = raw.rstrip()
+                if not t.strip() or re.fullmatch(r'\s*-?\s*특이사항.*', t):
+                    continue
+                sub = not t.lstrip().startswith(('*', '※', '-', '•', '·', '▣')) and bool(notes)
+                t = re.sub(r'^\s*[*※•·▣\-]\s*', '', t).strip()
+                if t:
+                    notes.append({'t': t, 'sub': sub})
+            continue
+        if ft.startswith('※'):
+            continue
+        g = lambda k: _cell_text(sh.raw(r, cols[k])) if k in cols else ''
+        row = {'time': g('time'), 'kind': g('kind'), 'task': g('task'), 'who': g('who')}
+        if row['task'] or row['kind']:
+            rows.append(row)
+    if not rows and not notes:
+        return None
+    return {'d': ymd(d), 'hours': hours, 'rows': rows, 'notes': notes}
+
+def parse_orders(src, outdir=None):
+    folder = os.path.join(src, '근무조 편성 및 작업지시서')
+    files = [f for f in glob.glob(os.path.join(folder, '*작업지시서*.xls*')) if not os.path.basename(f).startswith('~$')]
+    files.sort(key=lambda f: os.path.getmtime(f))          # 같은 날짜면 나중에 고친 파일 것
+    by_d = {}
+    if outdir:                                               # 지난 결과 이어받기 (파일을 날마다 덮어쓰는 경우)
+        try:
+            with open(os.path.join(outdir, 'reports__all.json'), encoding='utf-8') as f:
+                for o in (json.load(f).get('orders') or []):
+                    by_d[o['d']] = o
+        except Exception:
+            pass
+    stamps = []
+    for path in files:
+        wb = load(path)
+        for ws in wb.worksheets:
+            o = _order_sheet(Sheet(ws))
+            if o:
+                o['file'] = os.path.basename(path)
+                by_d[o['d']] = o
+        stamps.append(mtime(path))
+    if not by_d:
+        return None
+    return {'orders': [by_d[k] for k in sorted(by_d)], 'file': max(stamps) if stamps else None}
+
 def merge_reports(hwp, xl):
     """한글(~2026-10-06)과 엑셀(2026-10-07~) 업무보고서를 날짜순으로 합친다. 같은 날이 둘 다 있으면 엑셀 것을 쓴다."""
     if not hwp and not xl:
@@ -1365,6 +1448,7 @@ def build(src, outdir, today=None, progress=print):
     boiler = safe('보일러 가동일지', parse_boiler, src, default={}) or {}
     reports = merge_reports(safe('일일 업무보고서(한글)', parse_reports, src),
                             safe('일일 업무보고서(엑셀)', parse_reports_xlsx, src))
+    orders = safe('일간 작업지시서', parse_orders, src, outdir)
 
     def latest(dates):
         ds = [d for d in dates if d]
@@ -1392,6 +1476,8 @@ def build(src, outdir, today=None, progress=print):
                         'note': ', '.join(f"{int(k[5:])}월 기록 없음" for k, v in sorted(boiler.items()) if not v['last'])})
     if reports:
         sources.append({'key': 'reports', 'label': '일일 업무보고서', 'area': '업무', 'latest': latest([r['d'] for r in reports['reports']]), 'file': reports['file']})
+    if orders:
+        sources.append({'key': 'orders', 'label': '일간 작업지시서', 'area': '업무', 'latest': latest([o['d'] for o in orders['orders']]), 'file': orders['file']})
 
     docs = {
         'prod__summary': {'products': products, 'rawStock': raw_stock, 'oil': oil},
@@ -1401,7 +1487,7 @@ def build(src, outdir, today=None, progress=print):
         'stock__ledgers': ledgers,
         'labor__all': labor,
         'equip__boiler': {'months': boiler},
-        'reports__all': reports or {'reports': []},
+        'reports__all': {**(reports or {'reports': []}), 'orders': (orders or {}).get('orders', []), 'ordersFile': (orders or {}).get('file')},
         # meta 는 마지막에 쓴다 (화면은 meta 의 updatedAt 으로 새 자료를 알아챈다)
         'meta__info': {'updatedAt': dt.datetime.now().strftime('%Y-%m-%d %H:%M'), 'today': ymd(today),
                        'source': src, 'sources': sources, 'productFiles': prod_files, 'errors': errors},
