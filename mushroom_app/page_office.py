@@ -601,10 +601,22 @@ def _tab_recon(D):
         # 정산서 없이 통장 입금으로 맞춘 줄(추정·합산·운송비 차감)은 지급액·입금 글자를 갈색 점선 밑줄로 (v1.27.4)
         est = pd.Series(dst).str.contains("추정|합산|운송비|직접").tolist()
         sty = T.style.apply(lambda c: [EST_CSS if e else "" for e in est], subset=["지급액", "입금"])
-        st.dataframe(sty, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 480),
-                     column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
-                                    "문제": st.column_config.TextColumn(width="large"), "입금": st.column_config.TextColumn(width="medium"),
-                                    "경매일": st.column_config.TextColumn(width="small")})
+        # 표에서 줄을 누르면 아래 '세부내역 볼 거래'도 그 거래로 바뀐다 (v1.29.6)
+        tkey = f"rc_tbl_{pick}_{crop}_{ent}_{mk}_{show}"
+        ev = st.dataframe(sty, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 480), key=tkey,
+                          on_select="rerun", selection_mode="single-row",
+                          column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
+                                         "문제": st.column_config.TextColumn(width="large"), "입금": st.column_config.TextColumn(width="medium"),
+                                         "경매일": st.column_config.TextColumn(width="small")})
+        try:
+            rows = list(ev.selection.rows) if ev is not None else []
+        except Exception:
+            rows = []
+        sig = (tkey, tuple(rows))
+        if rows and 0 <= rows[0] < len(Z) and st.session_state.get("_rc_sel_sig") != sig:
+            st.session_state["rc_detail"] = _detail_label(Z.iloc[rows[0]])
+        st.session_state["_rc_sel_sig"] = sig
+        st.caption("표에서 줄을 누르면 아래 세부내역이 그 거래로 바뀝니다.")
         _detail(D, J, Z, pick, crop)
 
     # ③ 시장별 합계
@@ -674,14 +686,19 @@ def _bold_last(T):
     return T.style.apply(lambda r: ["font-weight: 700; background-color: rgba(42,120,214,0.12)" if r.name == n - 1 else "" for _ in r], axis=1)
 
 
+def _detail_label(r):
+    """세부내역 고르기 목록의 한 줄 이름 — 표에서 줄을 눌렀을 때도 같은 이름으로 찾는다"""
+    return f"{GRADE_ICON.get(r['등급'], '')} {pd.Timestamp(r['날짜']):%m/%d} {r['작물']} {r['시장']} — {r['문제'] or '정상'}"
+
+
 def _detail(D, X, Z, pick, crop):
     """고른 거래의 세부 — 일지 출고 줄 · 경매(팩스) 줄 · 팩스 문서 · 정산·입금 · 거래명세표 (v1.26.3, v1.26.5 정리)"""
     TW = D.get("TW") or {}
     STL = D.get("ST", pd.DataFrame())
     labels, opts = [], {}
-    for r in Z.itertuples():
-        lab = f"{GRADE_ICON.get(r.등급, '')} {r.날짜:%m/%d} {r.작물} {r.시장} — {r.문제 or '정상'}"
-        labels.append(lab); opts[lab] = (r.작물, r.시장, r.날짜)
+    for _, r in Z.iterrows():
+        lab = _detail_label(r)
+        labels.append(lab); opts[lab] = (r["작물"], r["시장"], r["날짜"])
     if not labels:
         return
     with st.container(border=True):

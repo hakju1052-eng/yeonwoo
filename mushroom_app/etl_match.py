@@ -9,6 +9,7 @@
 결과는 출하일 단위(장부 쪽)와 판매일 단위(팩스 쪽) 두 표, 그리고 정산(지급액) 표.
 """
 import collections
+import re
 import numpy as np
 import pandas as pd
 
@@ -484,6 +485,46 @@ def _share_settlements(U, st_, tol=1000):
     return U
 
 
+def _price_swaps(U, TW):
+    """'일부 미확인' 출하 — 못 맞춘 장부 박스 수가 그 경매일 팩스에서 못 맞춘 줄의 박스 수와 같으면
+    장부에 단가를 다르게(두 줄 단가를 바꿔) 적은 것으로 본다 (v1.29.6, 인천농산물 10/01: 장부 32×7,500·48×7,000 / 팩스 32×7,000·48×7,500).
+    그 박스는 팩스 단가로 경매 금액에 넣고, 문제 칸에는 🔴 대신 🟡 '장부 단가 입력 차이'를 적는다(열 _swap)."""
+    U["_swap"] = ""
+    if not isinstance(TW, dict) or "fax" not in TW or "lots" not in TW or U.empty:
+        return U
+    F, L = TW["fax"], TW["lots"]
+    if F is None or L is None or F.empty or L.empty:
+        return U
+    for i in U.index[(U["미확인박스"].fillna(0) > 0.5)]:
+        crop, mk, d0 = U.at[i, "작물"], U.at[i, "시장"], pd.Timestamp(U.at[i, "날짜"])
+        days = []
+        for t in str(U.at[i, "경매일"] or "").split(","):
+            t = t.strip()
+            if re.match(r"^\d{1,2}/\d{1,2}$", t):
+                m_, d_ = map(int, t.split("/"))
+                dd = pd.Timestamp(d0.year + (1 if m_ < d0.month - 6 else 0), m_, d_)
+                days.append(dd)
+        if not days:
+            continue
+        fl = F[(F["작물"] == crop) & (F["시장"] == mk) & F["판매일"].isin(days) & (F["미확인박스"] > 0.5) & (F["종류"] == "단가")]
+        ll = L[(L["작물"] == crop) & (L["시장"] == mk) & (L["날짜"] == d0) & (L["미확인박스"] > 0.5)]
+        n = float(U.at[i, "미확인박스"])
+        if fl.empty or ll.empty or abs(fl["미확인박스"].sum() - n) > 0.5:
+            continue
+        famt = float((fl["미확인박스"] * fl["단가"]).sum())
+        lamt = float((ll["미확인박스"] * ll["박스단가"]).sum())
+        fp = "·".join(f"{p:,.0f}" for p in sorted(fl["단가"].unique()))
+        lp = "·".join(f"{p:,.0f}" for p in sorted(ll["박스단가"].dropna().unique()))
+        U.at[i, "_swap"] = f"장부 단가 입력 차이({n:,.0f}박스: 장부 {lp}원 / 팩스 {fp}원, 팩스가 {famt - lamt:+,.0f}원) — 박스 수는 팩스와 일치"
+        U.at[i, "경매금액"] = (U.at[i, "경매금액"] if pd.notna(U.at[i, "경매금액"]) else 0) + famt
+        U.at[i, "확인박스"] = (U.at[i, "확인박스"] if pd.notna(U.at[i, "확인박스"]) else 0) + n
+        U.at[i, "미확인박스"] = 0
+        F.loc[fl.index, "짝"] = "장부 단가 다름"
+        F.loc[fl.index, "확인박스"] = F.loc[fl.index, "박스"]
+        F.loc[fl.index, "미확인박스"] = 0
+    return U
+
+
 def unified(J, TW, ST, MD, tol=1000):
     """(작물, 시장, 출하일) 한 줄 = 그날 출고가 경매·정산·입금·명세표까지 맞는지.
     반환 열: 작물, 시장, 날짜(출하일), 출고박스, 장부금액, 미정박스, 확인박스, 미확인박스, 경매금액, 경매일, 팩스상태,
@@ -537,6 +578,7 @@ def unified(J, TW, ST, MD, tol=1000):
         U = U.drop(columns=["_fs"])
     U["출고박스"] = U["출고박스"].fillna(U["장부박스"])
     U["재정산"] = U["재정산"].astype("boolean").fillna(False).astype(bool) if "재정산" in U else False
+    U = _price_swaps(U, TW)
 
     def judge(r):
         red, ref, wait = [], [], []
@@ -551,6 +593,9 @@ def unified(J, TW, ST, MD, tol=1000):
             same_box = pd.notna(fxb_) and abs(fxb_ - (r["출고박스"] or 0)) < 0.5
             if s == "일치":          # 돈(명세표=장부)은 맞고 팩스 줄 단위(kg 단가·작은 상자)가 달라 박스만 못 맞춘 것
                 ref.append(f"팩스와 박스 단위가 달라 {r['미확인박스']:,.0f}박스 못 맞춤(금액은 명세표와 같음)")
+            elif r.get("_swap"):     # 남은 박스 수가 그 경매일 팩스의 남은 줄과 똑같다 — 장부에 단가만 다르게(바꿔) 적은 것 (v1.29.6)
+                ref.append(r["_swap"])
+                s = "_단가차이"        # 장부 금액이 팩스와 다른 이유가 이것 — 아래 '장부 금액 다름'으로 또 띄우지 않음
             elif same_box and pd.notna(stm_) and pd.notna(fxa_) and abs(stm_ - fxa_) <= tol:
                 # 박스 수는 팩스와 같고 명세표도 팩스와 같다 — 장부에 단가를 잘못 적은 것 (서울 9/13: 장부 13,500 / 팩스 13,000, 경리 확인)
                 ref.append(f"장부 단가 입력 차이({r['미확인박스']:,.0f}박스, 장부가 팩스보다 {(led_ or 0) - (fxa_ or 0):+,.0f}원) — 명세표는 팩스와 일치")
