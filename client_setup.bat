@@ -1,15 +1,16 @@
 @echo off
 rem ============================================================
 rem  client_setup.bat - 다른 PC(살균솥 PC·사무실 PC)에서 한 번 실행
-rem   1) hosts 에 smartfarm 이름 등록 → http://smartfarm 으로 접속 (관리자 권한 필요, 자동으로 물어봄)
+rem   1) hosts 에 smartfarm 이름 등록 → http://smartfarm:8501 로 접속 (관리자 권한 필요, 자동으로 물어봄)
 rem   2) 바탕화면에 "스마트팜 분석 시스템" 바로가기 (주소창 없는 앱 창, 전체 화면)
 rem   3) 원하면 로그온할 때 자동으로 열리게 등록 (터치스크린 PC용)
-rem  서버 주소를 바꾸려면 아래 SERVER_IP 만 고친다.
+rem  서버 주소를 바꾸려면 아래 SERVER_IP·PORT 만 고친다. (2026-10-13 호스트 PC 유선 연결 → 192.168.0.92, 포트 8501)
 rem ============================================================
 chcp 949 >nul
-set "SERVER_IP=192.168.0.62"
+set "SERVER_IP=192.168.0.92"
 set "NAME=smartfarm"
-set "URL=http://%NAME%"
+set "PORT=8501"
+set "URL=http://%NAME%:%PORT%"
 
 rem --- 관리자 권한 확인 (hosts 수정 때문) ---
 net session >nul 2>&1
@@ -53,6 +54,6 @@ if /I "%AUTO%"=="y" (
 )
 echo.
 echo 완료. 바탕화면 바로가기를 눌러 %URL% 이 열리는지 확인하세요.
-echo (안 열리면 서버 PC에서 앱이 켜져 있는지, 포트가 80인지 - set_port.bat - 확인)
+echo (안 열리면 서버 PC에서 앱이 켜져 있는지, 서버 IP가 %SERVER_IP% 인지 확인)
 start "" "%LNK%"
 pause

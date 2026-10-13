@@ -139,7 +139,7 @@ def render(items, kpi, today):
 <h2 style='margin:0 0 4px 0'>스마트팜 아침 점검 — {today:%Y-%m-%d (%a)}</h2>
 <div style='color:#6b7160;margin-bottom:12px'>{kp}</div>
 {'<table style="border-collapse:collapse;border-top:2px solid #ddd">' + rows + '</table>' if items else '<p style="color:#1baf7a;font-weight:700">이상 없음 — 어제 환경·살균·배양 기록에서 걸린 항목이 없습니다.</p>'}
-<p style='color:#8a8f84;font-size:12px;margin-top:14px'>자세한 내용은 통합관리 시스템 (http://192.168.0.62:8501) 이상 감시·살균·배양실 페이지에서 확인하세요. 이 메일은 자동 발송입니다.</p></div>"""
+<p style='color:#8a8f84;font-size:12px;margin-top:14px'>자세한 내용은 통합관리 시스템 (http://192.168.0.92:8501) 이상 감시·살균·배양실 페이지에서 확인하세요. 이 메일은 자동 발송입니다.</p></div>"""
     text = f"스마트팜 아침 점검 {today:%Y-%m-%d}\n{kp}\n" + ("\n".join(f"[{i['level']}] {i['분류']}: {i['내용']}" for i in items) or "이상 없음")
     return body, text
 
