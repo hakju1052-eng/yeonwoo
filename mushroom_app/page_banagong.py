@@ -25,7 +25,7 @@ def _sig():
     return tuple(sorted((os.path.basename(f), int(os.path.getmtime(f))) for f in fs))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def _load(sig):
     d = {}
     for key, name in DOC_KEYS.items():

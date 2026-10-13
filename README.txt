@@ -1051,3 +1051,10 @@ update_unifarm.bat 에 캐시 갱신을 붙이는 예
   - client_setup.bat: SERVER_IP=192.168.0.92, 바로가기 주소 http://smartfarm:8501 (전엔 포트 80 가정이었음). 각 PC에서 다시 한 번 실행하면 hosts 의 옛 줄을 지우고 새로 씀.
   - notify.py 아침 메일 안 링크도 .92 로.
   - 권장: 공유기 DHCP 고정 할당에 유선 랜카드 MAC → 192.168.0.92 를 등록해 두면 공유기를 껐다 켜도 주소가 안 바뀜.
+■ v1.30.2 — 바깥 접속 속도·점점 느려짐 개선 (2026-10-13)
+  - 사용자: https://farm.cod-elnath.ts.net 이 내부망보다 많이 느리고, 점점 느려짐.
+  - serve_app.bat · serve_office.bat 에 --server.enableWebsocketCompression true (화면 데이터 압축 전송 — 바깥(Funnel) 접속에서 전송량 줄임).
+  - 메모리가 계속 늘던 것: app.py 의 화면 캐시(st.cache_data)가 자료가 갱신될 때마다(하루 2번) 옛 버전을 버리지 않고 쌓았음
+    → 버전만 받는 것은 최근 2개, 날짜·종류 인자를 받는 것은 12개까지만 보관(max_entries). 반가공 현황판 캐시도 2개.
+    etl_office 의 경리 엑셀 캐시도 같은 파일의 옛 버전을 버리게 함.
+  - 그래도 바깥이 느리면: 휴대폰·외부 PC에 Tailscale 앱을 설치해 같은 계정으로 로그인하면 중계 서버를 거치지 않고 직접 연결됨.

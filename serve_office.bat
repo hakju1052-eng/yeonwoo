@@ -7,4 +7,4 @@ cd /d %~dp0
 set "OFFICE_PORT=8502"
 if exist "%~dp0office_port.txt" set /p OFFICE_PORT=<"%~dp0office_port.txt"
 echo ===== %DATE% %TIME% start port %OFFICE_PORT% >> "%~dp0office_log.txt"
-python -m streamlit run mushroom_app\office_app.py --server.address 0.0.0.0 --server.port %OFFICE_PORT% --server.headless true --browser.gatherUsageStats false --logger.level warning >> "%~dp0office_log.txt" 2>&1
+python -m streamlit run mushroom_app\office_app.py --server.address 0.0.0.0 --server.port %OFFICE_PORT% --server.headless true --browser.gatherUsageStats false --server.enableWebsocketCompression true --logger.level warning >> "%~dp0office_log.txt" 2>&1

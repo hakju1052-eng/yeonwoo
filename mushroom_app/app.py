@@ -35,12 +35,12 @@ def _ver():
     return tuple(sorted((os.path.basename(f), int(os.path.getmtime(f))) for f in fs))
 
 
-@st.cache_data(show_spinner="환경 데이터 읽는 중…")
+@st.cache_data(max_entries=2, show_spinner="환경 데이터 읽는 중…")
 def load_env(ver):
     return A.env_daily()
 
 
-@st.cache_data(show_spinner="팽이 배치 사슬 만드는 중…")
+@st.cache_data(max_entries=2, show_spinner="팽이 배치 사슬 만드는 중…")
 def load_paengi(ver):
     env = load_env(ver)
     K = A.paengi_chain()
@@ -48,7 +48,7 @@ def load_paengi(ver):
     return K, PE
 
 
-@st.cache_data(show_spinner="새송이 배치 만드는 중…")
+@st.cache_data(max_entries=2, show_spinner="새송이 배치 만드는 중…")
 def load_ss(ver):
     env = load_env(ver)
     B = A.ss_batches()
@@ -56,44 +56,44 @@ def load_ss(ver):
     return B, SE
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_monthly(ver):
     B, _ = load_ss(ver)
     return A.paengi_monthly(), A.ss_monthly(B), A.cult_monthly()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_retort_vs_scrape(ver):
     return A.retort_vs_scrape()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_weather(ver):
     return A.weather_daily()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_sales(ver):
     return A.sales_monthly()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_loads(ver):
     return A.loads_with_cycles()
 
 
-@st.cache_data(show_spinner="배치 전 공정 표 만드는 중…")
+@st.cache_data(max_entries=2, show_spinner="배치 전 공정 표 만드는 중…")
 def load_stage_table(ver):
     env = load_env(ver); K, PE = load_paengi(ver)
     return A.paengi_stage_table(K, PE, env)
 
 
-@st.cache_data(show_spinner="공정 경고 확인 중…")
+@st.cache_data(max_entries=12, show_spinner="공정 경고 확인 중…")
 def load_process_alerts(ver, d1, d2):
     return A.process_alerts(d1, d2)
 
 
-@st.cache_data(show_spinner="솥 단위 기록 읽는 중…")
+@st.cache_data(max_entries=2, show_spinner="솥 단위 기록 읽는 중…")
 def load_loads_cycles(ver):
     return A.loads_with_cycles()
 
@@ -128,17 +128,17 @@ def batch_report_box(ver, bid, preview=True, where="dossier", basis="같은 계�
             st.caption(f"A4 {r['pages']}쪽으로 만들었습니다. 'PDF 내려받기'로 받아서 인쇄하거나 보관하세요.")
 
 
-@st.cache_data(show_spinner="종균·액탱크 자료 만드는 중…")
+@st.cache_data(max_entries=2, show_spinner="종균·액탱크 자료 만드는 중…")
 def load_tanks(ver):
     return A.tank_batches()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_retort(ver):
     return etl_retort.load_daily()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_retort_cycles(ver):
     return etl_retort.load_cycles()
 
@@ -153,12 +153,12 @@ def load_retort_1min(ver, units, d1, d2):
     return etl_retort.load_1min(units=list(units), d1=d1, d2=d2)
 
 
-@st.cache_data(show_spinner="살균 원본 읽는 중…")
+@st.cache_data(max_entries=12, show_spinner="살균 원본 읽는 중…")
 def load_retort_day(ver, unit, d):
     return etl_retort.load_day(unit, d)
 
 
-@st.cache_data(show_spinner="이상 항목 찾는 중…")
+@st.cache_data(max_entries=12, show_spinner="이상 항목 찾는 중…")
 def load_anomalies(ver, days):
     return A.anomalies(load_env(ver), days=days)
 
@@ -615,7 +615,7 @@ def page_compare(ver, crop):
 
 
 # ───────────────────────── 페이지: 배양실 ─────────────────────────
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def load_cult(ver):
     env = load_env(ver)
     return A.cult_env_monthly(env), A.cult_monthly()
@@ -766,7 +766,7 @@ def _recent_repairs_box(ver, RP, days):
 
 
 # ───────────────────────── 페이지: 수리 이력 (v1.23.0) ─────────────────────────
-@st.cache_data(show_spinner="수리 기록 읽는 중…")
+@st.cache_data(max_entries=2, show_spinner="수리 기록 읽는 중…")
 def load_repairs(ver):
     return A.repairs(), A.repair_costs()
 
@@ -813,7 +813,7 @@ def room_repair_chart(env, room, d0, d1, reps=None, marks=None, height=260):
 EQUIP_COLOR = {"냉방": "#2a78d6", "난방": "#eb6834", "가습": "#1baf7a", "환기": "#8a5cd0"}
 
 
-@st.cache_data(show_spinner="설비 가동률 계산 중…")
+@st.cache_data(max_entries=2, show_spinner="설비 가동률 계산 중…")
 def load_equip(ver):
     K, PE = load_paengi(ver)
     _, SE = load_ss(ver)
@@ -1083,7 +1083,7 @@ def page_repairs(ver, me):
 
 
 # ───────────────────────── 페이지: 원가 ─────────────────────────
-@st.cache_data(show_spinner="원가 계산 중…")
+@st.cache_data(max_entries=2, show_spinner="원가 계산 중…")
 def load_cost(ver):
     return A.cost_monthly()
 
@@ -1186,7 +1186,7 @@ def page_cost(ver):
 
 
 # ───────────────────────── 페이지: 재고 대사 ─────────────────────────
-@st.cache_data(show_spinner="재고 대사 중…")
+@st.cache_data(max_entries=12, show_spinner="재고 대사 중…")
 def load_recon(ver, crop):
     return A.stock_recon(crop)
 
@@ -1355,7 +1355,7 @@ def page_ai(ver):
     st.session_state.ai_view.append(("assistant", text))
 
 # ───────────────────────── 페이지: 일일 확인 ─────────────────────────
-@st.cache_data(show_spinner="일지 기록 확인 중…")
+@st.cache_data(max_entries=12, show_spinner="일지 기록 확인 중…")
 def load_checklist(ver, date, days, today):
     return A.daily_checklist(date, days, today=today)
 
@@ -1453,7 +1453,7 @@ DO_ORDERS = ["최근 순", "좋은 순", "나쁜 순"]
 GRADE_MARK = {"좋음": "🟢 좋음", "보통": "⚪ 보통", "미흡": "🔴 미흡"}
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=12, show_spinner=False)
 def load_rank(ver, basis):
     return A.rank_table(load_stage_table(ver), basis)
 

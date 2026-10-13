@@ -30,6 +30,8 @@ def _cached(path, fn):
     except OSError:
         return pd.DataFrame()
     if key not in _CACHE:
+        for k in [k for k in _CACHE if k[0] == path and k[2] == fn.__name__]:   # 같은 파일의 옛 버전은 버린다(메모리가 계속 늘지 않게, v1.30.2)
+            del _CACHE[k]
         try:
             _CACHE[key] = fn(path)
         except Exception as e:                       # 양식이 바뀌어 못 읽으면 빈 표 + 사유
