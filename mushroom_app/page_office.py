@@ -11,6 +11,7 @@ import altair as alt
 import streamlit as st
 
 from . import etl_office as O
+from . import config as C
 
 try:
     from packaging.version import Version as _V
@@ -53,6 +54,19 @@ def _load(ver):
     return office_bundle.get()
 
 
+def _copy_now():
+    """SynologyDrive_사본_갱신.bat — 경리 PC 바탕화면(\\\\SERA-DESK) → 사본 (v1.30.3). 실패해도 화면은 계속."""
+    import subprocess
+    bat = getattr(C, "OFFICE_COPY_BAT", "")
+    if not bat or not os.path.exists(bat) or os.name != "nt":
+        return False
+    try:
+        subprocess.run(["cmd", "/c", bat], capture_output=True, timeout=300)
+        return True
+    except Exception:
+        return False
+
+
 def _err(df):
     return isinstance(df, pd.DataFrame) and "_error" in df
 
@@ -64,12 +78,14 @@ def render(ver, me):
     st.session_state["_office_me"] = me.get("name") or me.get("id") or ""
     src = O.root()
     c1, c2 = st.columns([5, 1])
-    c1.caption(f"경리(사무실) 자료를 모아 정리한 화면입니다 — 관리자만 보입니다. 원본 폴더: `{src}`"
-               + (" (Z: 드라이브가 안 보여 사본을 읽는 중)" if not src.upper().startswith("Z:") else ""))
-    if c2.button("다시 읽기", key="of_reload", help="원본이 바뀌었는지 지금 확인합니다. 바뀐 게 없으면 저장본을 그대로 씁니다(1초). 바뀌었으면 다시 계산합니다(20초쯤)."):
+    c1.caption(f"경리(사무실) 자료를 모아 정리한 화면입니다 — 관리자만 보입니다. 읽는 폴더: `{src}` "
+               "(경리 PC 바탕화면 \\\\SERA-DESK 에서 1시간마다 복사, 팩스 스캔은 시놀로지)")
+    if c2.button("다시 읽기", key="of_reload", help="경리 PC 바탕화면에서 바뀐 파일을 지금 가져오고(수십 초), 바뀐 게 있으면 다시 계산합니다."):
+        with st.spinner("경리 PC에서 바뀐 파일 가져오는 중…"):
+            _copy_now()
         _load.clear(); st.rerun()
     if not os.path.isdir(src):
-        st.warning("원본 폴더를 찾지 못했습니다. Z: 드라이브 연결을 확인하거나 Downloads\\SynologyDrive_문서_복사.bat 을 실행하세요."); return
+        st.warning("자료 폴더를 찾지 못했습니다. Downloads\\SynologyDrive_사본_갱신.bat 을 한 번 실행하세요(경리 PC 바탕화면에서 복사)."); return
     D = _load(ver)
     if D.get("made"):
         c1.caption(f"자료 계산 시각 {D['made']} ({D.get('secs', 0):.0f}초 걸림) — 원본이 바뀌면 갱신(09:00·15:00) 때 미리 다시 계산합니다.")

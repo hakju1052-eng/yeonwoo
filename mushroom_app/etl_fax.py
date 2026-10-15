@@ -40,6 +40,7 @@ JSON 외의 글은 쓰지 마세요."""
 def fax_roots():
     """스캔 폴더 후보 — Z: 원본, 없으면 Downloads 사본"""
     office = getattr(C, "LOG_SOURCES", {}).get("office", [])
+    office = sorted(office, key=lambda p: not str(p).upper().startswith("Z:"))   # 스캔은 시놀로지(Z:)가 원본 — 먼저 (v1.30.3)
     return [os.path.join(p, "스캔") for p in office]
 
 
