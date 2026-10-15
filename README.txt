@@ -1065,3 +1065,7 @@ update_unifarm.bat 에 캐시 갱신을 붙이는 예
   - Downloads\SynologyDrive_사본_갱신.bat: 문서(엑셀·한글·워드)는 \\SERA-DESK 바탕화면에서(그 PC가 꺼져 있으면 Z:에서), 스캔은 Z:에서.
     1시간마다(app_watch) + 경영 자료 '다시 읽기' 누를 때 바로 실행. 아이디·비번 등 이름 든 파일·사진·PDF는 그대로 제외.
   - config.LOG_SOURCES["office"]: 사본을 먼저 읽음(전엔 Z: 우선). etl_fax 는 스캔만 Z: 우선.
+■ v1.30.4 — 팩스 스캔도 경리 PC 공유(\\SERA-DESK\스캔)에서 (2026-10-15)
+  - 사용자: 스캔 폴더도 공유함. → \\SERA-DESK\스캔 (보관 하위 폴더 포함, 1,279개 — 시놀로지 스캔과 같은 구성) 확인.
+  - SynologyDrive_사본_갱신.bat: 스캔은 \\SERA-DESK\스캔 → Downloads\SynologyDrive_사본\스캔 (/MIR), 안 보이면 Z:. 첫 실행은 시각 차이로 전부 다시 받음.
+  - etl_fax 는 사본 스캔 폴더를 먼저 봄(v1.30.3 의 Z: 우선을 되돌림).

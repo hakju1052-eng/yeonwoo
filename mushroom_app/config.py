@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.30.3"
+VERSION = "1.30.4"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -63,7 +63,7 @@ LOG_SOURCES = {
     "retort": [os.path.join(DATA_DIR, "살균솥")],
     # 경리(사무실) 자료 — '경영 자료' 페이지(관리자 전용). SynologyDrive_사본_갱신.bat 이 경리 PC 바탕화면
     # (\\SERA-DESK\Users\jinsung3\Desktop, 시놀로지 동기화가 늦어 2026-10-15 부터 직접)에서 복사한 사본을 먼저 읽는다.
-    # 팩스 스캔(스캔\)은 시놀로지에만 있으므로 etl_fax 는 Z: 를 먼저 본다.
+    # 팩스 스캔(스캔\)도 경리 PC 공유 \\SERA-DESK\스캔 에서 사본으로 복사한다(v1.30.4).
     "office": [os.path.join(HOME, "Downloads", "SynologyDrive_사본"), r"Z:\사무실\SynologyDrive"],
 }
 # 경영 자료 '다시 읽기' 때 먼저 돌리는 복사 배치 (경리 PC 바탕화면 → 사본, 스캔은 시놀로지 → 사본)

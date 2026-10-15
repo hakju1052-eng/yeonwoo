@@ -79,7 +79,7 @@ def render(ver, me):
     src = O.root()
     c1, c2 = st.columns([5, 1])
     c1.caption(f"경리(사무실) 자료를 모아 정리한 화면입니다 — 관리자만 보입니다. 읽는 폴더: `{src}` "
-               "(경리 PC 바탕화면 \\\\SERA-DESK 에서 1시간마다 복사, 팩스 스캔은 시놀로지)")
+               "(경리 PC \\\\SERA-DESK 의 바탕화면·스캔 공유에서 1시간마다 복사)")
     if c2.button("다시 읽기", key="of_reload", help="경리 PC 바탕화면에서 바뀐 파일을 지금 가져오고(수십 초), 바뀐 게 있으면 다시 계산합니다."):
         with st.spinner("경리 PC에서 바뀐 파일 가져오는 중…"):
             _copy_now()
