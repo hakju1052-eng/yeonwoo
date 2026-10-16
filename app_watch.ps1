@@ -1,7 +1,8 @@
 # Auto restart for the farm app (Streamlit). Run every minute by Task Scheduler via app_watch.vbs.
 # Restarts the app when any mushroom_app\*.py file is newer than the last start,
 # or when RESTART_REQUEST.txt exists. Also starts the app if it is not running.
-# Also starts the Synology scan-folder copy every 60 minutes (synocopy.stamp).
+# Also starts the Synology scan-folder copy every 60 minutes (synocopy.stamp)
+# and the household-ledger backup import every 60 minutes (mmbak.stamp).
 # If git_sync.on exists (made by the GitHub setup bat), it also commits/pulls/pushes with GitHub every minute,
 # so code pushed by anyone arrives here and is restarted within ~2 minutes.
 $ErrorActionPreference = 'SilentlyContinue'
@@ -80,6 +81,26 @@ try {
             Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $vbs.FullName + '"') -WindowStyle Hidden
             Log 'synology copy started'
         }
+    }
+
+    # ---- household-ledger backup (Money Manager .mmbak) -> Downloads\<ledger folder> every 60 min ----
+    # The daily 08:40 Task Scheduler entry was never registered, so the watcher runs the import .bat itself.
+    # The .bat (Korean name, found by its ':prune' label + 'MoneyManager') copies the newest MM*.mmbak from the
+    # Google Drive app folder only when it is new, keeps the last 3 and writes its own log next to them.
+    $mmStamp = Join-Path $app 'mmbak.stamp'
+    $mmDue = -not (Test-Path $mmStamp)
+    if (-not $mmDue) { $mmDue = ((Get-Date) - (Get-Item $mmStamp).LastWriteTime).TotalMinutes -ge 60 }
+    $mflag = Join-Path $app 'MMBAK_REQUEST.txt'
+    if (Test-Path $mflag) { Remove-Item $mflag -Force; $mmDue = $true }
+    if ($mmDue) {
+        Set-Content -Path $mmStamp -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        $mbat = Get-ChildItem -Path $dl -Filter '*.bat' -File | Where-Object {
+            (Select-String -Path $_.FullName -Pattern ':prune' -SimpleMatch -Quiet) -and
+            (Select-String -Path $_.FullName -Pattern 'MoneyManager' -SimpleMatch -Quiet) } | Select-Object -First 1
+        if ($mbat) {
+            Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"' + $mbat.FullName + '" /quiet') -WorkingDirectory $dl -WindowStyle Hidden
+            Log 'ledger backup import started'
+        } else { Log 'ledger backup import .bat not found in Downloads' }
     }
 
     # ---- data refresh on request: REFRESH_REQUEST.txt in the app folder -> run Downloads\refresh_all.bat hidden ----

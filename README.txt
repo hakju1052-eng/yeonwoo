@@ -1069,3 +1069,9 @@ update_unifarm.bat 에 캐시 갱신을 붙이는 예
   - 사용자: 스캔 폴더도 공유함. → \\SERA-DESK\스캔 (보관 하위 폴더 포함, 1,279개 — 시놀로지 스캔과 같은 구성) 확인.
   - SynologyDrive_사본_갱신.bat: 스캔은 \\SERA-DESK\스캔 → Downloads\SynologyDrive_사본\스캔 (/MIR), 안 보이면 Z:. 첫 실행은 시각 차이로 전부 다시 받음.
   - etl_fax 는 사본 스캔 폴더를 먼저 봄(v1.30.3 의 Z: 우선을 되돌림).
+■ v1.30.5 — 가계부 백업 1시간마다 자동 가져오기 (2026-10-16)
+  - 증상: 가계부 백업이 10/10 것에서 멈춤. 가계부_백업_가져오기.bat 은 10/10 에 손으로 한 번 실행된 기록뿐이고,
+    매일 08:40 작업(가계부_구글드라이브_연결.bat 에서 등록)은 돌지 않음(등록 안 된 것으로 보임, rclone tools 폴더도 없음).
+  - app_watch.ps1: 1시간마다(mmbak.stamp) 가계부_백업_가져오기.bat /quiet 를 숨김 실행. 새 백업이 있을 때만 복사, 최근 3개만 남김.
+    바로 가져오기: app 폴더에 MMBAK_REQUEST.txt. 기록: Downloads\가계부\가져오기_기록.txt, watch_log.txt 'ledger backup import started'.
+  - 원본은 PC 의 Google Drive 앱 폴더(내 드라이브\MoneyManager). 가계부 앱이 구글드라이브로 자동 백업해야 새 파일이 생김.
