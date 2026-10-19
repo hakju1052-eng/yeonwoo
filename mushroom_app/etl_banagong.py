@@ -1319,14 +1319,36 @@ def parse_reports_xlsx(src):
     return {'reports': reports, 'file': max(stamps)}
 
 # ───────────────────────── 7-3. 일간 작업지시서 (2026-10~) ─────────────────────────
-# 근무조 편성 및 작업지시서\*작업지시서*.xlsx — 시트 하나 = 하루. '2026년 10월 06일 (화) | 근무시간 08:00 ~ 18:30',
-#  표 머리 '시간 | 구분 | 작업 내용 | 작업자', 아래 '-특이사항 및 전달사항-' 칸(* 로 시작하는 줄, 들여쓴 줄은 앞 줄의 세부).
+# ① 근무조 편성 및 작업지시서\*작업지시서*.xlsx — 시트 하나 = 하루 (10/6 처음 양식)
+# ② 2026-10-19~ 업무자료\작업지시서YYMM\'10월19일.xlsx' — 파일 하나 = 하루 (폴더 이름에 '작업지시서'가 들면 모두)
+# 날짜 줄 '2026년 10월 19일 (월) | 근무 08:00~17:00', 표 머리 '시간 | 구분 | 작업 내용 | 담당자'
+#  (10/14 처럼 '번호 | 구역 / 시간 | 작업 구분 | 세부 작업지시 내용 | 담당자' 나 두 번째 표 '시간 | 작업 내용 | 담당' 도 읽음),
+#  아래 '-특이사항 및 전달사항-' 칸 또는 '비고 | …' / '비고 / 필수 준수사항' 아래 ①② 줄 = 전달사항.
 # 파일을 날마다 덮어써도 지난 날짜가 남도록 이전 결과(reports__all.json 의 orders)와 합친다.
+_BULLETS = ('*', '※', '•', '·', '▣', '①', '②', '③', '④', '⑤')
+_NOTE_HEAD = re.compile(r'^\s*-?\s*(특이\s*사항|전달\s*사항|비\s*고)')
+
+def _order_heads(sh, r, ncol):
+    heads = [norm(sh.raw(r, c)) for c in range(1, ncol + 1)]
+    if not (any('시간' in h_ for h_ in heads) and any('내용' in h_ or '작업' in h_ for h_ in heads)):
+        return None
+    cols = {}
+    for i, h_ in enumerate(heads, start=1):
+        if not h_:
+            continue
+        if 'time' not in cols and '시간' in h_: cols['time'] = i
+        elif 'kind' not in cols and '구분' in h_: cols['kind'] = i
+        elif 'task' not in cols and ('내용' in h_ or h_ == '작업'): cols['task'] = i
+        elif 'who' not in cols and ('작업자' in h_ or '담당' in h_): cols['who'] = i
+    return cols if 'task' in cols else None
+
 def _order_sheet(sh):
     d = hours = None
     hr = None
+    cols = {}
+    ncol = min(sh.max_col, 8)
     for r in range(1, min(sh.max_row, 10) + 1):
-        for c in range(1, min(sh.max_col, 8) + 1):
+        for c in range(1, ncol + 1):
             t = sh.raw(r, c)
             if t is None:
                 continue
@@ -1337,34 +1359,55 @@ def _order_sheet(sh):
                     d = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
                 except ValueError:
                     pass
-                mh = re.search(r'근무\s*시간\s*:?\s*([0-9:]+\s*~\s*[0-9:]+)', t)
+                mh = re.search(r'근무[^0-9|]*(\d{1,2}:\d{2}\s*~\s*\d{1,2}:\d{2})', t)
                 if mh:
-                    hours = re.sub(r'\s+', ' ', mh.group(1))
+                    hours = re.sub(r'\s+', '', mh.group(1)).replace('~', ' ~ ')
+                elif '|' in t:                                # '… (토) | 퇴근: 감자 전처리 작업 완료 후'
+                    rest = ' · '.join(x.strip() for x in t.split('|')[1:] if x.strip())
+                    hours = rest or None
         if hr is None:
-            heads = [norm(sh.raw(r, c)) for c in range(1, min(sh.max_col, 8) + 1)]
-            if '시간' in heads and any('작업' in h_ for h_ in heads):
-                hr = r
-                cols = {}
-                for i, h_ in enumerate(heads, start=1):
-                    if h_ == '시간': cols['time'] = i
-                    elif h_ == '구분': cols['kind'] = i
-                    elif '작업내용' in h_ or h_ == '내용': cols['task'] = i
-                    elif '작업자' in h_ or '담당' in h_: cols['who'] = i
+            cc = _order_heads(sh, r, ncol)
+            if cc:
+                hr, cols = r, cc
     if d is None or hr is None:
         return None
+
+    def add_note(t, sub=False):
+        t = re.sub(r'^\s*[*※•·▣\-]\s*', '', t).strip()
+        if t:
+            notes.append({'t': t, 'sub': sub})
+
     rows, notes = [], []
+    in_notes = False
     for r in range(hr + 1, sh.max_row + 1):
-        first = sh.raw(r, 1)
-        ft = str(first or '').strip()
-        if '특이사항' in ft or '전달사항' in ft:
-            for raw in ft.split('\n'):
+        vals = [sh.raw(r, c) for c in range(1, ncol + 1)]
+        filled = [str(v).strip() for v in vals if v is not None and str(v).strip()]
+        if not filled:
+            continue
+        ft = filled[0]
+        if len(filled) == 1 and (_NOTE_HEAD.match(ft) or ft.lstrip().startswith(_BULLETS)):
+            in_notes = True
+            lines = ft.split('\n')
+            head = lines[0]
+            mh = re.match(r'^\s*-?\s*(?:특이\s*사항|전달\s*사항|비\s*고)[^|:：]*[|:：]\s*(.+)$', head)
+            if mh:                                            # '비고 | …' · '비고: …' (한 줄짜리)
+                add_note(mh.group(1))
+            elif not _NOTE_HEAD.match(head):                  # '※ …' · '• …' 줄이 바로 시작
+                add_note(head)
+            for raw in lines[1:]:                             # 한 칸에 여러 줄 (10/6 양식)
                 t = raw.rstrip()
-                if not t.strip() or re.fullmatch(r'\s*-?\s*특이사항.*', t):
+                if not t.strip():
                     continue
                 sub = not t.lstrip().startswith(('*', '※', '-', '•', '·', '▣')) and bool(notes)
-                t = re.sub(r'^\s*[*※•·▣\-]\s*', '', t).strip()
-                if t:
-                    notes.append({'t': t, 'sub': sub})
+                add_note(t, sub)
+            continue
+        if in_notes:
+            if len(filled) == 1:
+                add_note(ft)
+            continue
+        cc = _order_heads(sh, r, ncol)                        # 두 번째 표 (예: '시간별 진행 계획')
+        if cc:
+            cols = cc
             continue
         if ft.startswith('※'):
             continue
@@ -1376,9 +1419,17 @@ def _order_sheet(sh):
         return None
     return {'d': ymd(d), 'hours': hours, 'rows': rows, 'notes': notes}
 
-def parse_orders(src, outdir=None):
+def _order_files(src):
+    out = []
     folder = os.path.join(src, '근무조 편성 및 작업지시서')
-    files = [f for f in glob.glob(os.path.join(folder, '*작업지시서*.xls*')) if not os.path.basename(f).startswith('~$')]
+    out += glob.glob(os.path.join(folder, '*작업지시서*.xls*'))
+    for sub in glob.glob(os.path.join(src, '*작업지시서*')):          # 업무자료\작업지시서2610\ 등 (하루 한 파일)
+        if os.path.isdir(sub) and os.path.basename(sub) != '근무조 편성 및 작업지시서':
+            out += glob.glob(os.path.join(sub, '**', '*.xls*'), recursive=True)
+    return [f for f in out if not os.path.basename(f).startswith('~$')]
+
+def parse_orders(src, outdir=None):
+    files = _order_files(src)
     files.sort(key=lambda f: os.path.getmtime(f))          # 같은 날짜면 나중에 고친 파일 것
     by_d = {}
     if outdir:                                               # 지난 결과 이어받기 (파일을 날마다 덮어쓰는 경우)
@@ -1390,7 +1441,10 @@ def parse_orders(src, outdir=None):
             pass
     stamps = []
     for path in files:
-        wb = load(path)
+        try:
+            wb = load(path)
+        except Exception:
+            continue
         for ws in wb.worksheets:
             o = _order_sheet(Sheet(ws))
             if o:

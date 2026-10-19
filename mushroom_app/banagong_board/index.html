@@ -292,7 +292,7 @@ function laborIn(P){
     activeDays: days.filter(d => d[1] > 0).length };
 }
 function reports(){ return ((S.D.reports||{}).reports||[]).filter(r => r.d <= S.today); }
-function orders(){ return ((S.D.reports||{}).orders||[]).filter(o => o.d <= S.today); }
+function orders(){ return ((S.D.reports||{}).orders||[]).filter(o => o.d <= S.today || daysBetween(S.today, o.d) <= 1); }   // 전날 미리 올린 내일 지시서도 보이게
 function sourceStatus(src){
   if (!src.latest) return { age:null, stale: !!CONTINUOUS[src.key] };
   const age = daysBetween(src.latest, S.today);
@@ -760,17 +760,17 @@ function vLogReports(){
   return h;
 }
 
-function vLogOrders(){                    // 일간 작업지시서 (근무조 편성 및 작업지시서\\*작업지시서*.xlsx)
+function vLogOrders(){                    // 일간 작업지시서 (근무조 편성 및 작업지시서\\*작업지시서*.xlsx, 작업지시서YYMM\\하루 한 파일)
   const ords = orders();
-  let h = logMenu() + `<div class="head"><div><h2>작업지시서</h2><p>근무조 편성 및 작업지시서 폴더의 일간 작업지시서를 날짜별로 보여 줍니다. 파일을 날마다 새로 써도 앱이 읽은 날짜는 남겨 둡니다.</p></div></div>`;
+  let h = logMenu() + `<div class="head"><div><h2>작업지시서</h2><p>업무자료의 작업지시서 폴더(작업지시서2610 등, 하루 한 파일)와 근무조 편성 및 작업지시서 폴더의 일간 작업지시서를 날짜별로 보여 줍니다. 파일을 날마다 새로 써도 앱이 읽은 날짜는 남겨 둡니다.</p></div></div>`;
   if (!ords.length) return h + `<div class="panel"><p class="empty">작업지시서가 없습니다.</p></div>`;
     const o = ords.find(x => x.d === S.ordD) || ords[ords.length - 1];
-    h += `<div class="panel"><h3>일간 작업지시서 <small>${esc(dLabel(o.d))}${o.hours ? " · 근무시간 " + esc(o.hours) : ""}</small></h3>`;
+    h += `<div class="panel"><h3>일간 작업지시서 <small>${esc(dLabel(o.d))}${o.hours ? (/\d:\d\d/.test(o.hours) ? " · 근무시간 " : " · ") + esc(o.hours) : ""}</small></h3>`;
     if (ords.length > 1) h += `<div class="logf"><select id="ordD" aria-label="작업지시서 날짜">${ords.slice().reverse().map(x => `<option value="${x.d}" ${x.d === o.d ? "selected" : ""}>${esc(dLabel(x.d))}</option>`).join("")}</select></div>`;
     if (o.rows && o.rows.length) h += `<div class="tw"><table><thead><tr><th>시간</th><th>구분</th><th>작업 내용</th><th>작업자</th></tr></thead><tbody>` +
       o.rows.map(r => `<tr><td class="nw">${esc(r.time)}</td><td class="nw">${esc(r.kind)}</td><td>${esc(r.task)}</td><td>${esc(r.who)}</td></tr>`).join("") + `</tbody></table></div>`;
     if (o.notes && o.notes.length) h += `<div class="rep" style="grid-template-columns:96px minmax(0,1fr)"><div class="rd">특이사항<small>전달사항</small></div><ul>${o.notes.map(l => `<li class="${l.sub ? "sub" : ""}">${esc(l.t)}</li>`).join("")}</ul></div>`;
-    h += `${(S.D.reports || {}).ordersFile ? `<p class="muted small" style="margin:6px 0 0">파일 수정 ${esc(S.D.reports.ordersFile)}</p>` : ""}</div>`;
+    h += `${o.file ? `<p class="muted small" style="margin:6px 0 0">파일 ${esc(o.file)}</p>` : ""}</div>`;
   return h;
 }
 
