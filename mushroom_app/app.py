@@ -1586,7 +1586,7 @@ def _dossier_tab(ver, ST, K, PE):
     d = lambda x: x.strftime("%m/%d") if pd.notna(x) else "—"
     tx = lambda x: "—" if x is None or (isinstance(x, float) and np.isnan(x)) or str(x) in ("nan", "None", "") else str(x)
     cards = [
-        ("종균", d(b.get("접종일")), tx(b.get('종균코드')), f"pH {f(b.get('종균pH'), 2)} · {tx(b.get('종균교반'))} · {tx(b.get('종균유래'))[:22]}"),
+        ("종균", d(b.get("접종일")), tx(b.get('종균코드')), f"pH {f(b.get('종균pH'), 2)} · 살균→탱크 {f(b.get('탱크대기일'))}일 · {tx(b.get('종균교반'))} · {tx(b.get('종균유래'))[:22]}"),
         ("배지", d(b.get("살균일")), f"pH {f(b.get('배지pH'), 2)} · 수분 {f(b.get('배지수분'), 1, '%')}", f"품온 {f(b.get('배지품온'), 1, '℃')} · 함량 {f(b.get('배지함량'), 0, 'g')} · 살균기 {tx(b.get('살균기'))}"),
         ("살균", d(b.get("살균일")), tx(b.get('살균솥')) if tx(b.get('살균솥')) != "—" else tx(b.get('살균기')), f"F0 {f(b.get('살균F0'), 0)} · 2차 {f(b.get('살균2차유지분'), 0, '분')} · 중단 {f(b.get('살균중단'), 0)}"),
         ("냉각", f"{d(b.get('살균일'))}→{d(b.get('접종일'))}", f"{f(b.get('냉각temp_max'), 0, '℃')} → {f(b.get('냉각temp_min'), 1, '℃')}", f"냉각실 평균 {f(b.get('냉각temp'), 1, '℃')} · 습도 {f(b.get('냉각hum'), 0, '%')} · 접종 시 배지 {f(b.get('접종온도'), 1, '℃')}"),
@@ -1780,19 +1780,81 @@ def page_spawn(ver):
     k3.metric("탱크 pH 평균", f(X.pH.mean(), 2), f"{X.pH.min():.2f}~{X.pH.max():.2f}" if X.pH.notna().any() else None, delta_color="off")
     k4.metric("액배양 일수", f(X.액배양일.mean(), 1, "일"), f"{X.액배양일.min():.0f}~{X.액배양일.max():.0f}" if X.액배양일.notna().any() else None, delta_color="off")
     k5.metric("균긁기 불량률", f(X["긁기불량률%"].mean(), 2, "%"), f"연결 {X['긁기불량률%'].notna().sum()}개 배치", delta_color="off")
-    k6.metric("살균 기록 연결", f"{X.살균솥.notna().sum() if '살균솥' in X else 0}개", "살균 페이지 액탱크 사이클", delta_color="off")
+    WAIT = getattr(C, "TANK_WAIT_WARN_DAYS", 4)
+    PHLOW = getattr(C, "TANK_PH_LOW", 6.15)
+    has_wait = "살균후대기일" in X
+    nlong = int((X["살균후대기일"] >= WAIT).sum()) if has_wait else 0
+    k6.metric("살균→제조 대기", f(X["살균후대기일"].mean(), 1, "일") if has_wait else "—",
+              (f"{WAIT}일 이상 {nlong}개" if nlong else f"{WAIT}일 이상 없음") if has_wait else "살균 기록 없음",
+              delta_color="inverse" if nlong else "off")
+
+    # ── 냉각 후 탱크 접종 지연 점검: 최근 45일 탱크 중 대기가 길었거나 pH 가 낮은 것 (품종·연도 필터와 무관하게 전체에서)
+    if "살균후대기일" in S:
+        R = S[S.일시 >= S.일시.max() - pd.Timedelta(days=45)].copy()
+        R["사유"] = ""
+        R.loc[R["살균후대기일"] >= WAIT, "사유"] += R["살균후대기일"].map(lambda v: f"살균 후 {v:.0f}일 대기 · " if pd.notna(v) else "")
+        R.loc[(R.품종 == "팽이") & (R.pH <= PHLOW), "사유"] += R.pH.map(lambda v: f"pH {v:.2f} 낮음 · " if pd.notna(v) else "")
+        R = R[R.사유 != ""]
+        if not R.empty:
+            lines = []
+            for _, r in R.sort_values("일시", ascending=False).iterrows():
+                used = pd.notna(r.get("접종일"))
+                res = r.get("긁기불량률%")
+                state = (f"병 접종 {pd.Timestamp(r['접종일']):%m/%d}" + (f" → 균긁기 불량 {res:.2f}%" if pd.notna(res) else " → 균긁기 결과 대기")) if used else "아직 병 접종 전"
+                sal = f"{pd.Timestamp(r['살균일']):%m/%d}" if pd.notna(r.get("살균일")) else "?"
+                lines.append(f"- **{r['코드']}** (탱크 {r['탱크NO']}, {r['품종']}) · 배지 살균 {sal} → 탱크 제조 {pd.Timestamp(r['일시']):%m/%d} · "
+                             f"{r['사유'].rstrip(' ·')} · {state}")
+            st.warning("**액탱크 점검 필요** — 배지 살균·냉각 후 탱크 접종까지 오래 기다렸거나 pH 가 낮은 탱크 (최근 45일)\n\n" + "\n".join(lines)
+                       + f"\n\n평소 대기는 1~2일(주말 3일)입니다. {WAIT}일 이상이면 냉각된 배지에 잡균이 먼저 자랄 수 있어, 병 접종 전에 탁도·냄새·pH·현미경으로 확인하거나 재살균하세요.")
 
     st.subheader("탱크 배치 목록 (최근 순)")
     ko = {"일시": "탱크 제조일", "품종": "품종", "탱크NO": "탱크", "코드": "종균 코드", "계통": "계통", "세대": "세대", "유래": "유래(조직분리)", "모균": "모균(플라스크)", "교반": "교반",
+          "살균일": "배지 살균일", "살균후대기일": "살균→제조(일)", "같은살균탱크": "같은 살균분 탱크",
           "pH": "탱크 pH", "접종일": "접종일", "액배양일": "액배양(일)", "종균pH": "접종 시 pH", "접종배지": "접종 배지", "살균후pH": "배지 살균후 pH",
-          "살균솥": "살균솥", "살균시작": "살균 시작", "살균2차유지분": "2차유지(분)", "살균최고온도": "최고온도", "살균F0": "F0", "살균중단": "살균 중단",
+          "살균솥": "살균솥", "살균시작": "살균 시작", "살균종료": "살균 종료", "살균2차유지분": "2차유지(분)", "살균최고온도": "최고온도", "살균F0": "F0", "살균중단": "살균 중단",
           "배양출고": "배양출고(병)", "긁기불량률%": "긁기불량률%", "병당중량": "병당중량(g)", "QC": "QC", "수확배치": "수확배치", "생성일비고": "작업일지 비고"}
     T = X[[c for c in ko if c in X]].rename(columns=ko).copy()
-    for c in ("탱크 제조일", "접종일"):
-        T[c] = pd.to_datetime(T[c]).dt.strftime("%m/%d")
-    if "살균 시작" in T:
-        T["살균 시작"] = pd.to_datetime(T["살균 시작"]).dt.strftime("%H:%M")
+    if has_wait:
+        flag = (X["살균후대기일"] >= WAIT).map({True: "⚠ 대기 김", False: ""}).fillna("")
+        flag = flag.where(~((X.품종 == "팽이") & (X.pH <= PHLOW)), (flag + " pH 낮음").str.strip())
+        T.insert(0, "점검", flag.values)
+    for c in ("탱크 제조일", "접종일", "배지 살균일"):
+        if c in T:
+            T[c] = pd.to_datetime(T[c]).dt.strftime("%m/%d")
+    for c in ("살균 시작", "살균 종료"):
+        if c in T:
+            T[c] = pd.to_datetime(T[c]).dt.strftime("%H:%M")
     st.dataframe(T.round(2), hide_index=True, **_FULL, height=360)
+    st.caption("탱크 제조일 = 플라스크 균을 탱크에 넣은 날(탱크 접종), 접종일 = 그 탱크로 병에 접종한 날. 배지 살균일 = 그 전에 끝난 가장 최근 액탱크 살균 사이클(살균솥 기록, 2026-03부터). "
+               f"살균→제조(일)이 {WAIT}일 이상이면 '⚠ 대기 김', 팽이 탱크 pH {PHLOW:.2f} 이하이면 'pH 낮음'으로 표시합니다.")
+
+    if has_wait:
+        st.subheader("같은 살균분 탱크 비교")
+        st.caption("한 번 살균한 배지로 여러 탱크를 만들기 때문에, 살균 조건은 같고 대기 일수만 다른 '형제 탱크'끼리 결과를 비교할 수 있습니다. "
+                   "대기가 긴 탱크만 불량이 많으면 살균이 아니라 냉각 후 대기가 원인입니다.")
+        L = X.dropna(subset=["살균일"])
+        lots = L.groupby("살균일").agg(n=("코드", "size"), maxw=("살균후대기일", "max")).reset_index().sort_values("살균일", ascending=False)
+        lots = lots[lots.n >= 2]
+        if lots.empty:
+            st.caption("같은 살균분으로 만든 탱크가 2개 이상인 회차가 없습니다.")
+        else:
+            longlots = lots[lots.maxw >= WAIT]
+            default = longlots.살균일.iloc[0] if not longlots.empty else lots.살균일.iloc[0]
+            opts = list(lots.살균일)
+            lab = {d: f"{pd.Timestamp(d):%m/%d (%a)} 살균 · 탱크 {int(n)}개 · 최장 대기 {w:.0f}일" + (" ⚠" if w >= WAIT else "")
+                   for d, n, w in zip(lots.살균일, lots.n, lots.maxw)}
+            sel = st.selectbox("살균 회차", opts, index=opts.index(default), format_func=lambda d: lab[d], key="sp_lot")
+            Lt = L[L.살균일 == sel].sort_values("일시")
+            cols_ = [c for c in ["일시", "품종", "탱크NO", "코드", "살균후대기일", "pH", "종균pH", "접종일", "배양출고", "긁기불량", "긁기불량률%", "병당중량", "QC"] if c in Lt]
+            V = Lt[cols_].rename(columns={"일시": "탱크 제조일", "탱크NO": "탱크", "코드": "종균 코드", "살균후대기일": "살균→제조(일)", "pH": "탱크 pH",
+                                          "종균pH": "접종 시 pH", "접종일": "병 접종일", "배양출고": "배양출고(병)", "긁기불량": "균긁기 불량(병)"})
+            for c in ("탱크 제조일", "병 접종일"):
+                V[c] = pd.to_datetime(V[c]).dt.strftime("%m/%d")
+            st.dataframe(V.round(2), hide_index=True, **_FULL)
+            r0 = Lt.iloc[0]
+            st.caption(f"살균: {r0.get('살균솥') or ''} {pd.Timestamp(r0['살균시작']):%m/%d %H:%M}~{pd.Timestamp(r0['살균종료']):%H:%M} · "
+                       f"2차 유지 {f(r0.get('살균2차유지분'))}분 · F0 {f(r0.get('살균F0'))} · 중단 {f(r0.get('살균중단'))}회. "
+                       "균긁기 결과는 병 접종 후 약 4주 뒤 배양소관리에 입력되면 채워집니다.")
 
     st.subheader("계통(유래)별 성적")
     G = X.groupby(["품종", "유래"]).agg(배치=("코드", "size"), 세대범위=("세대", lambda s: f"{s.min()}~{s.max()}"), pH=("pH", "mean"), 액배양일=("액배양일", "mean"),
@@ -1812,8 +1874,17 @@ def page_spawn(ver):
                      alt.Tooltip("병당중량:Q", format=".0f"), alt.Tooltip("살균F0:Q", title="F0", format=".0f")]), *event_layers(d1=Y.일시.min(), d2=Y.일시.max() + pd.Timedelta(days=14))).properties(height=260).interactive(bind_y=False), **_FULL)
 
     st.subheader("무엇이 불량률과 관계있나")
-    cols = st.columns(3)
-    for col, (xf, xt) in zip(cols, [("pH", "탱크 pH"), ("액배양일", "액배양 일수"), ("살균F0", "살균 F0")]):
+    if "살균후대기일" in Y and Y["살균후대기일"].notna().sum() >= 5:
+        W = Y.dropna(subset=["살균후대기일"]).copy()
+        W["대기"] = W["살균후대기일"].clip(upper=WAIT).astype(int).map(lambda v: f"{v}일" if v < WAIT else f"{WAIT}일 이상")
+        WG = W.groupby("대기").agg(탱크=("코드", "size"), 불량률평균=("긁기불량률%", "mean"), 불량률중앙값=("긁기불량률%", "median"),
+                                 불량률최고=("긁기불량률%", "max")).reset_index()
+        st.markdown("**배지 살균 → 탱크 제조 대기 일수별 균긁기 불량률**")
+        st.dataframe(WG.rename(columns={"대기": "살균→제조 대기", "불량률평균": "불량률% 평균", "불량률중앙값": "불량률% 중앙값", "불량률최고": "불량률% 최고"}).round(2),
+                     hide_index=True, **_FULL)
+        st.caption(f"평소 1~2일, 주말을 끼면 3일입니다. {WAIT}일 이상은 연휴 등으로 드물어 건수가 적으니, 위 '같은 살균분 탱크 비교'로 형제 탱크와 함께 보세요.")
+    cols = st.columns(4)
+    for col, (xf, xt) in zip(cols, [("pH", "탱크 pH"), ("액배양일", "액배양 일수"), ("살균F0", "살균 F0"), ("살균후대기일", "살균→제조 대기(일)")]):
         Z = Y.dropna(subset=[xf]) if xf in Y else pd.DataFrame()
         with col:
             if len(Z) >= 5:

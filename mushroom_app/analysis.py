@@ -1278,16 +1278,27 @@ def tank_batches():
         S.loc[(S["액배양일"] < 0) | (S["액배양일"] > 30), "액배양일"] = np.nan
         mk = D[["date", "비고"]].dropna().rename(columns={"date": "일시", "비고": "생성일비고"}).drop_duplicates("일시")
         S = S.merge(mk, on="일시", how="left")
-    # 살균솥: 같은 날 액탱크 사이클
+    # 살균솥: 탱크 접종(일시) 전에 끝난 가장 최근 액탱크 사이클 = 이 탱크 배지를 살균한 회차.
+    # 액탱크는 오후에 살균·냉각하고 다음 날(주말이면 사흘 뒤) 플라스크 균을 넣으므로, 같은 날 사이클이 아니라 그 전 사이클이다.
+    # 살균후대기일 = 살균 끝난 날부터 탱크 접종까지 달력 일수(평소 1~2일, 주말 3일). 길어지면 냉각된 배지에 잡균이 먼저 자랄 수 있다.
     try:
         CY = etl_retort.load_cycles()
     except Exception:
         CY = pd.DataFrame()
     if not CY.empty and "구분" in CY:
-        C = CY[CY["구분"] == "액탱크"].copy(); C["일시"] = C.start.dt.normalize()
-        agg = C.groupby("일시").agg(살균솥=("unit", lambda x: ",".join(sorted(set(x)))), 살균시작=("start", "min"), 살균2차유지분=("2차유지분", "mean"),
-                                  살균최고온도=("최고온도", "mean"), 살균F0=("F0", "mean"), 살균중단=("중단횟수", "sum")).reset_index()
-        S = S.merge(agg, on="일시", how="left")
+        C = CY[CY["구분"] == "액탱크"].dropna(subset=["end"]).copy()
+        C["살균일"] = C["end"].dt.normalize()
+        agg = C.groupby("살균일").agg(살균솥=("unit", lambda x: ",".join(sorted(set(x)))), 살균시작=("start", "min"), 살균종료=("end", "max"),
+                                    살균2차유지분=("2차유지분", "mean"), 살균최고온도=("최고온도", "mean"), 살균F0=("F0", "mean"),
+                                    살균중단=("중단횟수", "sum")).reset_index().sort_values("살균일")
+        S = S.sort_values("일시")
+        S = pd.merge_asof(S, agg, left_on="일시", right_on="살균일", direction="backward", allow_exact_matches=False)
+        S["살균후대기일"] = (S["일시"].dt.normalize() - S["살균일"]).dt.days
+        far = S["살균후대기일"] > getattr(C, "TANK_LINK_MAX_DAYS", 10)
+        for c in ["살균일", "살균솥", "살균시작", "살균종료", "살균2차유지분", "살균최고온도", "살균F0", "살균중단", "살균후대기일"]:
+            S.loc[far, c] = np.nan if c not in ("살균일", "살균시작", "살균종료") else pd.NaT
+        # 같은 살균분(같은 사이클 배지)으로 만든 탱크 수 — 대기일만 다른 형제 탱크끼리 비교할 수 있다
+        S["같은살균탱크"] = S.groupby("살균일")["코드"].transform("size")
     # 균긁기 결과: 팽이는 (접종일, 탱크NO), 새송이는 접종일
     P = etl_logs.load("cult_scrape_paengi")
     if not P.empty and "탱크" in P:
@@ -1441,7 +1452,8 @@ def paengi_stage_table(K=None, PE=None, env=None):
                 m = S[(S["접종일"] == r["접종일"]) & (S["품종"] == "팽이")]
             rows.append({"bid": r.bid, "종균코드": ", ".join(m["코드"].astype(str)) or None, "종균유래": m["유래"].iloc[0] if len(m) else None,
                          "종균세대": m["세대"].mean() if len(m) else np.nan, "종균pH": m["pH"].mean() if len(m) else np.nan,
-                         "액배양일": m["액배양일"].mean() if len(m) else np.nan, "종균교반": m["교반"].iloc[0] if len(m) else None})
+                         "액배양일": m["액배양일"].mean() if len(m) else np.nan, "종균교반": m["교반"].iloc[0] if len(m) else None,
+                         "탱크대기일": m["살균후대기일"].max() if len(m) and "살균후대기일" in m else np.nan})
         K = K.merge(pd.DataFrame(rows), on="bid", how="left")
     # 살균: 접종 전날 배지 사이클
     try:
