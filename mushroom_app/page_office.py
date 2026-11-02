@@ -592,8 +592,13 @@ def _tab_recon(D):
             tr_ = ym[ym["짝"] == "운송 지원금"]["금액"]; bj = ym[ym["짝"] != "운송 지원금"]["금액"]
             st.caption(f"대양청과 별도 입금({pick}): 재정산 보전금 {len(bj)}건 {bj.sum():,.0f}원 · 운송 지원금 {len(tr_)}건 {tr_.sum():,.0f}원 "
                        "— 경매가가 약속 단가(장부 비고 '재정산')보다 낮으면 대양이 차액의 94%를 '대양보전'으로 보완, 2만 원짜리는 운송 지원금")
-    tot[3].metric("명세표 금액", _eok(X["명세표"].sum()))
-    if "명세표대조" in X:
+    has_stmt = bool((X["명세표"].fillna(0) != 0).any())        # 이 달 경리나라 명세표가 들어와 있나 (v1.31.3: 없으면 명세표 칸을 아예 뺌)
+    if has_stmt:
+        tot[3].metric("명세표 금액", _eok(X["명세표"].sum()))
+    else:
+        tot[3].metric("명세표 금액", "미수령")
+        tot[3].caption("경리나라 명세표는 경리나라에 접속해 내려받아야 함(최세라 과장 담당). 받아서 경영 자료 폴더에 넣으면 이 달도 자동 대조.")
+    if "명세표대조" in X and has_stmt:
         sale_sum = X["판매대금"].sum(min_count=1)
         n_bad = int(X["명세표대조"].astype(str).str.startswith("다름").sum()); n_none = int((X["명세표대조"] == "명세표 없음").sum())
         n_wait = int((X["명세표대조"] == "명세표 아직 없음").sum())
@@ -605,9 +610,9 @@ def _tab_recon(D):
     # ② 확인할 거래 목록
     show = st.radio("목록", ["🔴 확인 필요만", "🔴🟡 확인+참고", "⏳ 대기 포함", "전부", "💰 금액 3단(명세표·정산·지급·입금)"], horizontal=True, key="rc_show", label_visibility="collapsed")
     if show.startswith("💰"):
-        _money_table(X, pick); _detail(D, J, X, pick, crop)
+        _money_table(X, pick, has_stmt); _detail(D, J, X, pick, crop)
     else:
-        _grade_table(D, J, X, pick, crop, ent, mk, show)
+        _grade_table(D, J, X, pick, crop, ent, mk, show, has_stmt)
 
     # ③ 시장별 합계
     with st.expander(f"{pick} 시장별 합계 (출고 → 경매 → 정산·입금 → 명세표)"):
@@ -619,8 +624,8 @@ def _tab_recon(D):
         G["명세표−경매"] = G["명세표"] - G["경매금액"]
         G["정산−경매"] = G["정산판매대금"] - G["경매금액"]
         G["입금−지급"] = G["입금"] - G["지급액"]
-        cols = ["작물", "시장", "출하일", "출고박스", "장부금액", "경매금액", "경매−장부", "명세표", "명세표−경매", "정산판매대금", "정산−경매", "정산없는날",
-                "지급액", "입금", "입금−지급", "입금없는날", "확인필요", "참고"]
+        cols = ["작물", "시장", "출하일", "출고박스", "장부금액", "경매금액", "경매−장부"] + (["명세표", "명세표−경매"] if has_stmt else []) + \
+               ["정산판매대금", "정산−경매", "정산없는날", "지급액", "입금", "입금−지급", "입금없는날", "확인필요", "참고"]
         st.dataframe(G.sort_values("장부금액", ascending=False)[cols], hide_index=True, **_FULL, column_config=NUMFMT([c for c in cols if c not in ("작물", "시장")]),
                      height=min(60 + 35 * len(G), 600))
         st.caption("돈 흐름 달 합계: 장부(출고장) → 경매(팩스 경락 총액) → 명세표(경리나라 공급가액, 세금계산서 금액) → 정산 판매대금(정산서) → 지급액 → 입금. "
@@ -629,7 +634,7 @@ def _tab_recon(D):
     _recon_tail(D, U, X, pick)
 
 
-def _money_table(X, pick):
+def _money_table(X, pick, has_stmt=True):
     """💰 금액 3단: 한 출하일의 명세표(경리나라) = 정산 판매대금 → −공제 = 지급액 → = 입금 (v1.31.0)"""
     only_bad = st.checkbox("안 맞는 줄만", value=True, key="rc_money_bad",
                            help="명세표≠정산, 공제 검산 다름, 지급≠입금, 명세표 없음(정산은 있는데), 입금 없음 중 하나라도 있는 줄")
@@ -642,14 +647,19 @@ def _money_table(X, pick):
     if Y.empty:
         st.success("이 달 출하는 명세표 = 시장 정산 = 지급액 = 입금까지 모두 맞습니다." if only_bad else "자료가 없습니다."); return
     Y = Y.sort_values(["_bad", "날짜", "작물", "시장"], ascending=[False, True, True, True])
+    flow = Y["돈흐름"].astype(str)
+    if not has_stmt:                                           # 명세표 미수령 달: 명세표 칸·'명세표 …' 문구를 뺀다 (v1.31.3)
+        flow = flow.str.replace(r"^[^·]*명세표[^·]*·\s*", "", regex=True)
     T = pd.DataFrame({"": Y["등급"].map(GRADE_ICON), "출하일": Y["날짜"].dt.strftime("%m/%d"), "작물": Y["작물"], "시장": Y["시장"],
-                      "명세표": Y["명세표"], "경매 금액": Y["경매금액"], "명세표−경매": Y["명세표"] - Y["경매금액"], "정산 판매대금": Y["판매대금"],
+                      **({"명세표": Y["명세표"]} if has_stmt else {}), "경매 금액": Y["경매금액"],
+                      **({"명세표−경매": Y["명세표"] - Y["경매금액"]} if has_stmt else {}), "정산 판매대금": Y["판매대금"],
                       "공제(수수료·운임·기타)": Y["공제"], "지급액": Y["지급액"], "입금": Y["입금액"], "입금−지급": Y["입금액"] - Y["지급액"],
-                      "대조": Y["돈흐름"], "문제": Y["문제"]})
-    numc = ["명세표", "경매 금액", "명세표−경매", "정산 판매대금", "공제(수수료·운임·기타)", "지급액", "입금", "입금−지급"]
+                      "대조": flow, "문제": Y["문제"]})
+    numc = [c for c in ["명세표", "경매 금액", "명세표−경매", "정산 판매대금", "공제(수수료·운임·기타)", "지급액", "입금", "입금−지급"] if c in T]
     for c in numc:
         T[c] = pd.to_numeric(T[c], errors="coerce").map(lambda v: "" if pd.isna(v) else f"{v:,.0f}")
-    T.loc[T["명세표"] == "0", ["명세표", "명세표−경매"]] = ""          # 명세표가 아직 없으면 차이도 빈칸
+    if "명세표" in T:
+        T.loc[T["명세표"] == "0", ["명세표", "명세표−경매"]] = ""      # 명세표가 아직 없으면 차이도 빈칸
     T.loc[T["지급액"] == "", "입금−지급"] = ""
     st.dataframe(T, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 600),
                  column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
@@ -660,7 +670,7 @@ def _money_table(X, pick):
                "명세표가 경매와 다르면 세금계산서 금액이 시장과 어긋난 것이라 경리가 명세표를 고쳐야 합니다. '명세표 아직 없음'은 경리가 아직 입력 전.")
 
 
-def _grade_table(D, J, X, pick, crop, ent, mk, show):
+def _grade_table(D, J, X, pick, crop, ent, mk, show, has_stmt=True):
     sel = {"🔴 확인 필요만": ["확인"], "🔴🟡 확인+참고": ["확인", "참고"], "⏳ 대기 포함": ["확인", "참고", "대기"], "전부": ["확인", "참고", "대기", "처리", "정상"]}[show]
     if show == "전부":                                   # 전부는 날짜 순 — 확인 필요를 위로 올리면 더 헷갈림 (v1.29.2)
         Z = X[X["등급"].isin(sel)].sort_values(["날짜", "작물", "시장"])
@@ -671,15 +681,16 @@ def _grade_table(D, J, X, pick, crop, ent, mk, show):
     else:
         T = pd.DataFrame({"": Z["등급"].map(GRADE_ICON), "출하일": Z["날짜"].dt.strftime("%m/%d"), "작물": Z["작물"], "시장": Z["시장"], "문제": Z["문제"],
                           "출고 박스": Z["출고박스"], "장부 금액": Z["장부금액"], "경매 금액": Z["경매금액"], "경매일": Z["경매일"],
-                          "지급액": Z["지급액"], "입금": Z["입금액"], "명세표 금액": Z["명세표"].where(Z["명세표"].fillna(0) != 0)})
-        numc = ["출고 박스", "장부 금액", "경매 금액", "지급액", "입금", "명세표 금액"]   # 명세표는 항상 표시, 아직 없으면 빈칸 (v1.31.1, 전엔 문제 있을 때만)
+                          "지급액": Z["지급액"], "입금": Z["입금액"], **({"명세표 금액": Z["명세표"].where(Z["명세표"].fillna(0) != 0)} if has_stmt else {})})
+        numc = ["출고 박스", "장부 금액", "경매 금액", "지급액", "입금"] + (["명세표 금액"] if has_stmt else [])   # 명세표는 받은 달만 (v1.31.3)
         # 숫자가 없는 칸은 'None' 대신 빈칸(글자로 바꿔서) — 지급액이 비면 '정산서가 없어 모름'이지 '입금 못 찾음'이 아니다
         for c in numc:
             T[c] = pd.to_numeric(T[c], errors="coerce").map(lambda v: "" if pd.isna(v) else f"{v:,.0f}")
         T.loc[T["경매 금액"] == "0", "경매 금액"] = ""          # 팩스가 없으면 경매 금액도 모르는 것 — 0이 아니라 빈칸
         # 명세표가 아직 없는 날은 빈칸 대신 글자로 (v1.31.1)
-        ms = Z["명세표상태"].astype(str).tolist() if "명세표상태" in Z else [""] * len(Z)
-        T["명세표 금액"] = [v if v else ("아직 없음" if m_.startswith("명세표 아직") else ("명세표에 없음" if m_ == "명세표에 없음" else "")) for v, m_ in zip(T["명세표 금액"], ms)]
+        if has_stmt:
+            ms = Z["명세표상태"].astype(str).tolist() if "명세표상태" in Z else [""] * len(Z)
+            T["명세표 금액"] = [v if v else ("아직 없음" if m_.startswith("명세표 아직") else ("명세표에 없음" if m_ == "명세표에 없음" else "")) for v, m_ in zip(T["명세표 금액"], ms)]
         # 입금은 금액으로, 금액이 없을 때만 문구(입금 못 찾음·아직 입금 전) (v1.29.2)
         dst = Z["입금상태"].astype(str).tolist()
         T["입금"] = [v if v else (d if d in ("입금 못 찾음", "아직 입금 전") else "") for v, d in zip(T["입금"], dst)]
