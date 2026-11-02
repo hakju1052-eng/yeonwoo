@@ -385,7 +385,7 @@ def parse_ss_room_qc(path):
 
 
 LEDGER_DROPPED = {}      # 파일 → 다른 달이라 버린 행 수 (parse_ledger)
-PARSE_RULES = {"ledger": 2}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
+PARSE_RULES = {"ledger": 3}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
 
 
 def parse_ledger(wb, crop, path):
@@ -1439,14 +1439,16 @@ def run(progress=None, force=False):
                 if progress:
                     progress(f"오류 {base}: {e}")
                 continue
+            # 이 파일이 전에 냈던 행은 먼저 모두 걷어낸다 — 다시 읽어서 빈 표가 나와도(지난달 행만 있던 파일 등) 옛 행이 남지 않게 (v1.30.8)
+            for k in set(prev_rows) | set(res):
+                if k in data and not data[k].empty and "_src" in data[k] and (data[k]._src == key).any():
+                    data[k] = data[k][data[k]._src != key]
+                    changed.add(k)
             for k, df in res.items():
                 if df is None or df.empty:
                     continue
                 df = df.copy(); df["_src"] = key
-                old = data[k]
-                if not old.empty and "_src" in old:
-                    old = old[old._src != key]
-                data[k] = pd.concat([old, df], ignore_index=True)
+                data[k] = pd.concat([data[k], df], ignore_index=True)
                 changed.add(k)
             st[key] = {"mtime": mt, "rows": {k: int(len(v)) for k, v in res.items()}, "read": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}
             if LEDGER_DROPPED.get(key):
