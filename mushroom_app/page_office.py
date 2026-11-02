@@ -671,12 +671,15 @@ def _grade_table(D, J, X, pick, crop, ent, mk, show):
     else:
         T = pd.DataFrame({"": Z["등급"].map(GRADE_ICON), "출하일": Z["날짜"].dt.strftime("%m/%d"), "작물": Z["작물"], "시장": Z["시장"], "문제": Z["문제"],
                           "출고 박스": Z["출고박스"], "장부 금액": Z["장부금액"], "경매 금액": Z["경매금액"], "경매일": Z["경매일"],
-                          "지급액": Z["지급액"], "입금": Z["입금액"], "명세표 금액": Z["명세표"].where(Z["문제"].astype(str).str.contains("명세표"))})
-        numc = ["출고 박스", "장부 금액", "경매 금액", "지급액", "입금", "명세표 금액"]   # 명세표는 문제가 있을 때만 (v1.29.2)
+                          "지급액": Z["지급액"], "입금": Z["입금액"], "명세표 금액": Z["명세표"].where(Z["명세표"].fillna(0) != 0)})
+        numc = ["출고 박스", "장부 금액", "경매 금액", "지급액", "입금", "명세표 금액"]   # 명세표는 항상 표시, 아직 없으면 빈칸 (v1.31.1, 전엔 문제 있을 때만)
         # 숫자가 없는 칸은 'None' 대신 빈칸(글자로 바꿔서) — 지급액이 비면 '정산서가 없어 모름'이지 '입금 못 찾음'이 아니다
         for c in numc:
             T[c] = pd.to_numeric(T[c], errors="coerce").map(lambda v: "" if pd.isna(v) else f"{v:,.0f}")
         T.loc[T["경매 금액"] == "0", "경매 금액"] = ""          # 팩스가 없으면 경매 금액도 모르는 것 — 0이 아니라 빈칸
+        # 명세표가 아직 없는 날은 빈칸 대신 글자로 (v1.31.1)
+        ms = Z["명세표상태"].astype(str).tolist() if "명세표상태" in Z else [""] * len(Z)
+        T["명세표 금액"] = [v if v else ("아직 없음" if m_.startswith("명세표 아직") else ("명세표에 없음" if m_ == "명세표에 없음" else "")) for v, m_ in zip(T["명세표 금액"], ms)]
         # 입금은 금액으로, 금액이 없을 때만 문구(입금 못 찾음·아직 입금 전) (v1.29.2)
         dst = Z["입금상태"].astype(str).tolist()
         T["입금"] = [v if v else (d if d in ("입금 못 찾음", "아직 입금 전") else "") for v, d in zip(T["입금"], dst)]
@@ -689,7 +692,7 @@ def _grade_table(D, J, X, pick, crop, ent, mk, show):
                           on_select="rerun", selection_mode="single-row",
                           column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
                                          "문제": st.column_config.TextColumn(width="large"), "입금": st.column_config.TextColumn(width="medium"),
-                                         "경매일": st.column_config.TextColumn(width="small")})
+                                         "명세표 금액": st.column_config.TextColumn(width="medium"), "경매일": st.column_config.TextColumn(width="small")})
         try:
             rows = list(ev.selection.rows) if ev is not None else []
         except Exception:
@@ -714,7 +717,7 @@ def _recon_tail(D, U, X, pick):
     _fax_panel(D, pick)
     with st.expander("읽는 법"):
         st.markdown("""
-- **한 줄 = 한 시장의 하루 출하.** 그 출하가 ① 다음 날 경매 팩스(박스·단가) ② 정산서 지급액 → 통장 입금까지 맞는지 한꺼번에 봅니다. 경리나라 거래명세표는 바로 만들어지지 않아서 금액이 다를 때만 🟡로 알려 주고(명세표 금액 칸도 그때만 채움), 아직 없는 것은 표시하지 않습니다.
+- **한 줄 = 한 시장의 하루 출하.** 그 출하가 ① 다음 날 경매 팩스(박스·단가) ② 정산서 지급액 → 통장 입금까지 맞는지 한꺼번에 봅니다. 경리나라 거래명세표 금액은 항상 보여 주고(경리가 아직 입력 전이면 '아직 없음'), 경매 금액과 다를 때만 🟡로 알려 줍니다.
 - 🔴 **확인 필요**: 경매 팩스가 스캔 폴더에 없음 · 경매에서 박스가 확인 안 됨 · 장부 금액이 시장 정산과 다름 · 출하 뒤 3일이 지나도 지급액·입금이 안 잡힘(8/13 팩스 시작 뒤 출하분) — 사람이 봐야 하는 것.
 - 🟡 **참고**: 재정산(장부 비고에 적힘, 팩스는 첫 경락가) · 시장이 kg 단가나 작은 상자로 적어 박스 수만 다른 것(돈은 명세표와 같음).
 - ⏳ **대기**: 출하 뒤 3일이 안 된 것(정산서·입금을 기다리는 중) · 장부에 경락가가 아직 없는 출하 — 기다리면(또는 정산서를 스캔하면) 채워집니다. 입금 문자가 안 와 못 잡힌 건은 ✏️ 직접 확인·수정에 입금액을 적거나 '확인함'으로 두면 🔴 에서 빠집니다.
