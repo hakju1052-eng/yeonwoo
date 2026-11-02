@@ -690,9 +690,8 @@ def _grade_table(D, J, X, pick, crop, ent, mk, show):
         tkey = f"rc_tbl_{pick}_{crop}_{ent}_{mk}_{show}"
         ev = st.dataframe(sty, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 480), key=tkey,
                           on_select="rerun", selection_mode="single-row",
-                          column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
-                                         "문제": st.column_config.TextColumn(width="large"), "입금": st.column_config.TextColumn(width="medium"),
-                                         "명세표 금액": st.column_config.TextColumn(width="medium"), "경매일": st.column_config.TextColumn(width="small")})
+                          column_config=_colw({"": 36, "출하일": 56, "작물": 56, "시장": 92, "문제": 250, "출고 박스": 72, "장부 금액": 92, "경매 금액": 92,
+                                               "경매일": 60, "지급액": 92, "입금": 100, "명세표 금액": 100}))
         try:
             rows = list(ev.selection.rows) if ev is not None else []
         except Exception:
@@ -735,6 +734,23 @@ def _recon_tail(D, U, X, pick):
 
 
 NUMFMT = lambda cols: {c: st.column_config.NumberColumn(format="localized") for c in cols}
+
+
+def _colw(px):
+    """열 너비를 픽셀로 (Streamlit 1.45+). 기본표가 가로 스크롤 없이 명세표 칸까지 보이게 — 문제 칸은 줄여서(마우스를 올리면 전부 보임) (v1.31.2).
+    옛 버전이면 small/medium/large 로 바꿈."""
+    try:
+        from packaging.version import Version as _V
+        ok = _V(st.__version__) >= _V("1.45")
+    except Exception:
+        ok = False
+    out = {}
+    for c, w in px.items():
+        if ok:
+            out[c] = st.column_config.TextColumn(width=int(w))
+        else:
+            out[c] = st.column_config.TextColumn(width="large" if w >= 200 else ("medium" if w >= 100 else "small"))
+    return out
 EST_CSS = "color: #a0522d; text-decoration: underline dotted; font-style: italic"     # 정산서 없이 입금으로 추정한 값 표시
 
 
