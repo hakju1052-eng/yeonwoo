@@ -2477,7 +2477,12 @@ def page_data(ver):
     st.subheader("작업일지 읽기 상태")
     ls = etl_logs.status()
     if ls:
-        rows = [{"파일": k, "읽은 시각": v.get("read"), "행": json.dumps(v.get("rows"), ensure_ascii=False) if v.get("rows") else "", "오류": v.get("error", "")} for k, v in sorted(ls.items())]
+        rows = [{"파일": k, "읽은 시각": v.get("read"), "행": json.dumps(v.get("rows"), ensure_ascii=False) if v.get("rows") else "",
+                 "오류": v.get("error", ""), "비고": v.get("dropped", "")} for k, v in sorted(ls.items()) if not k.startswith("_") and isinstance(v, dict)]
+        dropped = [(os.path.basename(k), v["dropped"]) for k, v in ls.items() if isinstance(v, dict) and v.get("dropped")]
+        if dropped:
+            st.warning("**지난달 행이 남아 있는 일지** — 새 달 파일을 지난달 파일을 복사해 만든 것으로 보입니다. 파일 이름의 달과 다른 행은 읽지 않았습니다(출고가 두 번 잡히는 것을 막음). "
+                       "원본에서 지난달 행을 지워 주세요.\n\n" + "\n".join(f"- {a}: {b}" for a, b in dropped))
         st.dataframe(pd.DataFrame(rows), hide_index=True, **_FULL, height=300)
     else:
         st.info("아직 일지를 읽지 않았습니다.")

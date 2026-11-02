@@ -384,6 +384,10 @@ def parse_ss_room_qc(path):
     return {"ss_room_qc": pd.DataFrame(out)}
 
 
+LEDGER_DROPPED = {}      # 파일 → 다른 달이라 버린 행 수 (parse_ledger)
+PARSE_RULES = {"ledger": 2}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
+
+
 def parse_ledger(wb, crop, path):
     """생산 상세일지의 '입출고내역' 시트 → 입출고 원장 (재고/입고/출고 행). 파일명의 연·월을 month 로."""
     if "입출고내역" not in wb.sheetnames:
@@ -406,7 +410,16 @@ def parse_ledger(wb, crop, path):
                      "cust": d.get("거래처"), "sub": d.get("거래처세부"), "gubun": d.get("구분"), "eco": d.get("친환경"), "grade": d.get("등급"),
                      "name": d.get("규격명"), "spec": d.get("규격"), "unit": _fnum(d.get("단위중량")), "box": _fnum(d.get("수량(box)")),
                      "kg": _fnum(d.get("중량(kg)")), "price": _fnum(d.get("단가(원)")), "amt": _fnum(d.get("금액(원)")), "note": d.get("비고")})
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # 파일 이름의 달과 다른 달의 행은 버린다 — 새 달 파일을 지난달 파일을 복사해 만들면 지난달 입출고가 그대로 남아
+    # 같은 출고가 두 번 잡힌다(2026-11 새송이 상세일지에 10월 출고 384행이 남아 10월 출하 대사가 전부 '확인 필요'로 뜸, v1.30.8).
+    # 지금까지 어떤 일지 파일에도 다른 달 행은 없었다(그 한 건 뿐).
+    if month and len(df):
+        same = pd.to_datetime(df["date"]).dt.strftime("%Y-%m") == month
+        if (~same).any():
+            LEDGER_DROPPED[path] = int((~same).sum())
+            df = df[same].reset_index(drop=True)
+    return df
 
 
 # ───────────────────────── 원가 자료 (권석현 폴더) ─────────────────────────
@@ -1407,13 +1420,16 @@ def run(progress=None, force=False):
     data = {k: (pd.read_parquet(_p(k)) if os.path.exists(_p(k)) and not force else pd.DataFrame()) for k in DATASETS}
     changed, n = set(), 0
     live = set()
+    old_rules = st.get("_rules", {}) if isinstance(st.get("_rules"), dict) else {}
+    rule_kinds = {k for k, v in PARSE_RULES.items() if old_rules.get(k) != v}      # 규칙이 바뀐 자료 — 그 자료가 든 파일은 다시 읽음
     for kind, path, fn in source_files():
         if True:
             base = os.path.basename(path)
             key = path
             live.add(key)
             mt = os.path.getmtime(path)
-            if st.get(key, {}).get("mtime") == mt:
+            prev_rows = (st.get(key, {}).get("rows") or {}) if isinstance(st.get(key), dict) else {}
+            if st.get(key, {}).get("mtime") == mt and not (rule_kinds & set(prev_rows)):
                 continue
             try:
                 res = fn(path)
@@ -1433,6 +1449,8 @@ def run(progress=None, force=False):
                 data[k] = pd.concat([old, df], ignore_index=True)
                 changed.add(k)
             st[key] = {"mtime": mt, "rows": {k: int(len(v)) for k, v in res.items()}, "read": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}
+            if LEDGER_DROPPED.get(key):
+                st[key]["dropped"] = f"파일 달과 다른 행 {LEDGER_DROPPED[key]}개 버림(입출고내역)"
             n += 1
             if progress:
                 progress(f"읽음 {base}")
@@ -1459,6 +1477,7 @@ def run(progress=None, force=False):
             if df[c].dtype == object:
                 df[c] = df[c].astype(str).where(df[c].notna(), None)
         df.to_parquet(_p(k) + ".tmp", index=False); os.replace(_p(k) + ".tmp", _p(k))
+    st["_rules"] = dict(PARSE_RULES)
     json.dump(st, open(STATE, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
     return n
 
