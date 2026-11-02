@@ -548,6 +548,7 @@ def _tab_recon(D):
     try:                                                   # 출하 3일 지나도 지급액·입금이 없으면 🔴 (v1.29.3)
         from . import etl_match as EM
         U = EM.flag_missing(U)
+        U = EM.money_chain(U)                              # 직접 적은 입금액까지 반영한 돈 3단 대조 (v1.31.0)
     except Exception:
         pass
     U = U.copy(); U["월"] = U["날짜"].dt.strftime("%Y-%m")
@@ -592,9 +593,74 @@ def _tab_recon(D):
             st.caption(f"대양청과 별도 입금({pick}): 재정산 보전금 {len(bj)}건 {bj.sum():,.0f}원 · 운송 지원금 {len(tr_)}건 {tr_.sum():,.0f}원 "
                        "— 경매가가 약속 단가(장부 비고 '재정산')보다 낮으면 대양이 차액의 94%를 '대양보전'으로 보완, 2만 원짜리는 운송 지원금")
     tot[3].metric("명세표 금액", _eok(X["명세표"].sum()))
+    if "명세표대조" in X:
+        sale_sum = X["판매대금"].sum(min_count=1)
+        n_bad = int(X["명세표대조"].astype(str).str.startswith("다름").sum()); n_none = int((X["명세표대조"] == "명세표 없음").sum())
+        n_wait = int((X["명세표대조"] == "명세표 아직 없음").sum())
+        n_dep = int(X["입금대조"].astype(str).str.startswith("다름").sum()) + int((X["입금대조"] == "입금 없음").sum())
+        tot[3].caption(f"시장 정산 판매대금 {_eok(sale_sum) if pd.notna(sale_sum) else '—'}"
+                       + (f" · 명세표≠경매 {n_bad}건" if n_bad else "") + (f" · 명세표 없음 {n_none}건" if n_none else "") + (f" · 명세표 아직 없음 {n_wait}건" if n_wait else "")
+                       + (f" · 지급≠입금 {n_dep}건" if n_dep else ""))
 
     # ② 확인할 거래 목록
-    show = st.radio("목록", ["🔴 확인 필요만", "🔴🟡 확인+참고", "⏳ 대기 포함", "전부"], horizontal=True, key="rc_show", label_visibility="collapsed")
+    show = st.radio("목록", ["🔴 확인 필요만", "🔴🟡 확인+참고", "⏳ 대기 포함", "전부", "💰 금액 3단(명세표·정산·지급·입금)"], horizontal=True, key="rc_show", label_visibility="collapsed")
+    if show.startswith("💰"):
+        _money_table(X, pick); _detail(D, J, X, pick, crop)
+    else:
+        _grade_table(D, J, X, pick, crop, ent, mk, show)
+
+    # ③ 시장별 합계
+    with st.expander(f"{pick} 시장별 합계 (출고 → 경매 → 정산·입금 → 명세표)"):
+        G = X.groupby(["작물", "시장"]).agg(출하일=("날짜", "size"), 출고박스=("출고박스", "sum"), 장부금액=("장부금액", "sum"), 경매확인박스=("확인박스", "sum"),
+                                         경매금액=("경매금액", "sum"), 명세표=("명세표", "sum"), 정산판매대금=("판매대금", "sum"), 정산없는날=("판매대금", lambda s: int(s.isna().sum())),
+                                         지급액=("지급액", "sum"), 입금=("입금액", "sum"), 입금없는날=("입금액", lambda s: int(s.isna().sum())),
+                                         확인필요=("등급", lambda s: int((s == "확인").sum())), 참고=("등급", lambda s: int((s == "참고").sum()))).reset_index()
+        G["경매−장부"] = G["경매금액"] - G["장부금액"]
+        G["명세표−경매"] = G["명세표"] - G["경매금액"]
+        G["정산−경매"] = G["정산판매대금"] - G["경매금액"]
+        G["입금−지급"] = G["입금"] - G["지급액"]
+        cols = ["작물", "시장", "출하일", "출고박스", "장부금액", "경매금액", "경매−장부", "명세표", "명세표−경매", "정산판매대금", "정산−경매", "정산없는날",
+                "지급액", "입금", "입금−지급", "입금없는날", "확인필요", "참고"]
+        st.dataframe(G.sort_values("장부금액", ascending=False)[cols], hide_index=True, **_FULL, column_config=NUMFMT([c for c in cols if c not in ("작물", "시장")]),
+                     height=min(60 + 35 * len(G), 600))
+        st.caption("돈 흐름 달 합계: 장부(출고장) → 경매(팩스 경락 총액) → 명세표(경리나라 공급가액, 세금계산서 금액) → 정산 판매대금(정산서) → 지급액 → 입금. "
+                   "명세표−경매가 0이면 세금계산서가 시장 경락과 맞는 것. 정산−경매는 정산서가 없는 날(정산없는날, 추정 입금)과 달 경계(말일 출하분이 다음 달 경매)만큼 어긋납니다. "
+                   "입금−지급은 아직 입금 전인 날(입금없는날)만큼 음수. 날짜별로는 하루 출하분 일부가 그다음 경매로 넘어가 어긋나 보일 수 있으니 달 합계로 보세요.")
+    _recon_tail(D, U, X, pick)
+
+
+def _money_table(X, pick):
+    """💰 금액 3단: 한 출하일의 명세표(경리나라) = 정산 판매대금 → −공제 = 지급액 → = 입금 (v1.31.0)"""
+    only_bad = st.checkbox("안 맞는 줄만", value=True, key="rc_money_bad",
+                           help="명세표≠정산, 공제 검산 다름, 지급≠입금, 명세표 없음(정산은 있는데), 입금 없음 중 하나라도 있는 줄")
+    Y = X.copy()
+    bad = (Y["명세표대조"].astype(str).str.startswith("다름") | Y["명세표대조"].isin(["명세표 없음"]) | Y["공제검산"].astype(str).str.startswith("다름")
+           | Y["입금대조"].astype(str).str.startswith("다름") | (Y["입금대조"] == "입금 없음"))
+    Y["_bad"] = bad
+    if only_bad:
+        Y = Y[bad]
+    if Y.empty:
+        st.success("이 달 출하는 명세표 = 시장 정산 = 지급액 = 입금까지 모두 맞습니다." if only_bad else "자료가 없습니다."); return
+    Y = Y.sort_values(["_bad", "날짜", "작물", "시장"], ascending=[False, True, True, True])
+    T = pd.DataFrame({"": Y["등급"].map(GRADE_ICON), "출하일": Y["날짜"].dt.strftime("%m/%d"), "작물": Y["작물"], "시장": Y["시장"],
+                      "명세표": Y["명세표"], "경매 금액": Y["경매금액"], "명세표−경매": Y["명세표"] - Y["경매금액"], "정산 판매대금": Y["판매대금"],
+                      "공제(수수료·운임·기타)": Y["공제"], "지급액": Y["지급액"], "입금": Y["입금액"], "입금−지급": Y["입금액"] - Y["지급액"],
+                      "대조": Y["돈흐름"], "문제": Y["문제"]})
+    numc = ["명세표", "경매 금액", "명세표−경매", "정산 판매대금", "공제(수수료·운임·기타)", "지급액", "입금", "입금−지급"]
+    for c in numc:
+        T[c] = pd.to_numeric(T[c], errors="coerce").map(lambda v: "" if pd.isna(v) else f"{v:,.0f}")
+    T.loc[T["명세표"] == "0", ["명세표", "명세표−경매"]] = ""          # 명세표가 아직 없으면 차이도 빈칸
+    T.loc[T["지급액"] == "", "입금−지급"] = ""
+    st.dataframe(T, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 600),
+                 column_config={**{c: st.column_config.TextColumn(width="small") for c in numc}, "": st.column_config.TextColumn(width="small"),
+                                "대조": st.column_config.TextColumn(width="large"), "문제": st.column_config.TextColumn(width="large")})
+    st.caption("명세표 = 경리나라 매출 거래명세표 공급가액(출하일 기준, 세금계산서 금액). 경매 금액 = 그 출하분을 팩스 판매원표 줄과 박스·단가로 맞춘 경락 총액(출하일 기준). "
+               "정산 판매대금 = 정산서의 판매대금(경매일 기준이라 하루 출하분이 이틀 경매로 넘어가면 날짜가 어긋남 — 달 합계로 봄). "
+               "공제 = 상장수수료+운임+하역비 등. 지급액 = 판매대금−공제(정산서에 찍힌 값). 입금 = 통장(가계부) 입금. "
+               "명세표가 경매와 다르면 세금계산서 금액이 시장과 어긋난 것이라 경리가 명세표를 고쳐야 합니다. '명세표 아직 없음'은 경리가 아직 입력 전.")
+
+
+def _grade_table(D, J, X, pick, crop, ent, mk, show):
     sel = {"🔴 확인 필요만": ["확인"], "🔴🟡 확인+참고": ["확인", "참고"], "⏳ 대기 포함": ["확인", "참고", "대기"], "전부": ["확인", "참고", "대기", "처리", "정상"]}[show]
     if show == "전부":                                   # 전부는 날짜 순 — 확인 필요를 위로 올리면 더 헷갈림 (v1.29.2)
         Z = X[X["등급"].isin(sel)].sort_values(["날짜", "작물", "시장"])
@@ -635,17 +701,8 @@ def _tab_recon(D):
         st.caption("표에서 줄을 누르면 아래 세부내역이 그 거래로 바뀝니다.")
         _detail(D, J, Z, pick, crop)
 
-    # ③ 시장별 합계
-    with st.expander(f"{pick} 시장별 합계 (출고 → 경매 → 정산·입금 → 명세표)"):
-        G = X.groupby(["작물", "시장"]).agg(출하일=("날짜", "size"), 출고박스=("출고박스", "sum"), 장부금액=("장부금액", "sum"), 경매확인박스=("확인박스", "sum"),
-                                         경매금액=("경매금액", "sum"), 지급액=("지급액", "sum"), 입금=("입금액", "sum"), 명세표=("명세표", "sum"),
-                                         확인필요=("등급", lambda s: int((s == "확인").sum())), 참고=("등급", lambda s: int((s == "참고").sum()))).reset_index()
-        G["경매−장부"] = G["경매금액"] - G["장부금액"]
-        G["명세표−장부"] = G["명세표"] - G["장부금액"]
-        st.dataframe(G.sort_values("장부금액", ascending=False), hide_index=True, **_FULL, column_config=NUMFMT([c for c in G.columns if c not in ("작물", "시장")]),
-                     height=min(60 + 35 * len(G), 600))
-        st.caption("날짜별로는 하루 출하분 일부가 그다음 경매로 넘어가기도 해서 어긋나 보일 수 있지만, 박스·단가 단위로 맞춘 것이라 달 합계로 보면 됩니다.")
 
+def _recon_tail(D, U, X, pick):
     # ④ 월별 추이
     with st.expander("월별 추이 (장부 ↔ 명세표 ↔ 팩스)"):
         M = U.groupby("월").agg(출고박스=("출고박스", "sum"), 장부금액=("장부금액", "sum"), 명세표=("명세표", "sum"), 경매금액=("경매금액", "sum"),
@@ -668,6 +725,7 @@ def _tab_recon(D):
 - 🟡 **운송비 차감**: 대전농협처럼 본정산 없이 가정산(운송비 미공제)만 온 날은 지급액에서 운송비(만 원 단위)를 뺀 금액이 입금된 것을 찾아 맞춥니다. 🟡 **장부 단가 입력 차이**: 박스 수와 명세표는 팩스와 같은데 장부 단가만 다른 것. 🟡 **명세표 입력 날짜 차이**: 같은 시장의 며칠 안 +x/−x 가 상쇄되는 것(일부 박스를 다른 경매일로 입력).
 - 경매는 보통 출하 다음 날이고, 하루 출하분 일부가 그다음 경매로 넘어가면 '경매일'에 두 날짜가 적힙니다(박스·단가는 똑같이 맞춘 것).
   포장실 일지 비고에 '9/5 정산'처럼 적힌 줄은 그날 경매로 넘긴 것 — 그 날짜 팩스와 맞추고, 그날 팩스가 없으면 "N박스는 M/D 경매로 넘김 — 그날 팩스 없음"으로 알려줍니다.
+- 💰 **금액 3단**: 출하일마다 명세표(경리나라 공급가액) = 경매 금액 → 정산 판매대금 −공제 = 지급액 → = 입금을 한 줄로 보고, '안 맞는 줄만'으로 어긋난 날만 봅니다. 시장별 합계에는 달 단위 돈 흐름(장부→경매→명세표→정산→지급→입금)이 있습니다.
 - 거래를 고르면 아래 세부내역에 일지 줄·팩스 줄·팩스 문서·정산·입금·명세표가 나오고, 맨 아래 **✏️ 직접 확인·수정**에서 확인함(✔️)/보류/금액 입력·메모를 저장할 수 있습니다(app_cache\\recon_manual.json, 누가 언제 적었는지 같이).
 - 팩스가 빠진 날은 그 팩스를 스캔 폴더에 'MMDD 팽서부.pdf'처럼 이름 붙여 넣으면 다음 갱신(09:00·15:00) 때 앱이 읽어 저절로 맞춥니다. 종이로만 확인했으면 위 폼에 금액을 적어 두세요.
 """)

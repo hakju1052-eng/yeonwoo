@@ -525,6 +525,54 @@ def _price_swaps(U, TW):
     return U
 
 
+def money_chain(U, tol=1000):
+    """돈 3단 대조 (v1.31.0): 경리나라 명세표(공급가액) = 경매금액(출하일 기준 경락 총액) → 정산서 판매대금 −공제(수수료·운임·기타) = 지급액 → = 통장 입금.
+    새 열: 공제(수수료+운임+기타), 명세표대조(일치/다름(+x)/명세표 없음/정산 없음), 공제검산(맞음/다름(+x)/''), 입금대조(일치/다름(+x)/입금 없음/''),
+          돈흐름("명세표=정산 ✓ · 공제 ✓ · 입금 ✓" 꼴 한 줄)."""
+    if U is None or U.empty:
+        return U
+    U = U.copy()
+    for c in ("명세표", "판매대금", "수수료", "운임", "기타공제", "지급액", "입금액"):
+        if c not in U:
+            U[c] = np.nan
+    U["공제"] = U[["수수료", "운임", "기타공제"]].sum(axis=1, min_count=1)
+    stm, sale, pay, dep = U["명세표"], U["판매대금"], U["지급액"], U["입금액"]
+    # 명세표의 짝은 출하일 기준 경매금액(장부 줄과 박스·단가로 맞춘 경락 총액). 정산서 판매대금은 경매일 기준이라 하루 출하분이
+    # 이틀 경매로 넘어가면 날짜가 어긋나(구리 9/1 −96만/9/2 +92만) 달 합계로만 비교한다. 경매금액이 없는 날(팩스 없음)만 판매대금으로.
+    auc = U["경매금액"] if "경매금액" in U else pd.Series(np.nan, index=U.index)
+    ref_ = auc.where(auc.fillna(0) != 0, sale)
+    U["명세표기준"] = np.where(auc.fillna(0) != 0, "경매", np.where(sale.fillna(0) != 0, "정산", ""))
+    stat = U["명세표상태"].astype(str) if "명세표상태" in U else pd.Series("", index=U.index)
+    has_stm = stm.fillna(0) != 0
+    has_ref = ref_.notna() & (ref_.fillna(0) != 0)
+    d1 = stm - ref_
+    U["명세표대조"] = np.select(
+        [has_stm & has_ref & (d1.abs() <= tol), has_stm & has_ref, ~has_stm & has_ref & stat.str.startswith("명세표 아직"),
+         ~has_stm & has_ref, has_stm & ~has_ref],
+        ["일치", "다름", "명세표 아직 없음", "명세표 없음", "경매·정산 없음"], "")
+    U.loc[U["명세표대조"] == "다름", "명세표대조"] = [f"다름({v:+,.0f}원)" for v in d1[U["명세표대조"] == "다름"]]
+    has_sale = sale.notna() & (sale.fillna(0) != 0)
+    d2 = sale - U["공제"].fillna(0) - pay
+    ok2 = has_sale & pay.notna()
+    U["공제검산"] = np.select([ok2 & (d2.abs() <= 1), ok2], ["맞음", "다름"], "")
+    U.loc[U["공제검산"] == "다름", "공제검산"] = [f"다름({v:+,.0f}원)" for v in d2[U["공제검산"] == "다름"]]
+    d3 = dep - pay
+    has_pay = pay.notna() & (pay.fillna(0) != 0)
+    U["입금대조"] = np.select([has_pay & dep.notna() & (d3.abs() <= 1), has_pay & dep.notna(), has_pay & dep.isna()],
+                          ["일치", "다름", "입금 없음"], "")
+    U.loc[U["입금대조"] == "다름", "입금대조"] = [f"다름({v:+,.0f}원)" for v in d3[U["입금대조"] == "다름"]]
+
+    def flow(r):
+        a = r["명세표대조"]; b = r["공제검산"]; c = r["입금대조"]
+        b_ = r.get("명세표기준") or "경매"
+        p1 = f"명세표={b_} ✓" if a == "일치" else (f"명세표≠{b_} ✗ " + a[2:] if a.startswith("다름") else (a or "—"))
+        p2 = "공제 ✓" if b == "맞음" else ("공제 ✗ " + b[2:] if b.startswith("다름") else "공제 —")
+        p3 = "입금 ✓" if c == "일치" else ("입금 ✗ " + c[2:] if c.startswith("다름") else (c or "입금 —"))
+        return f"{p1} · {p2} · {p3}"
+    U["돈흐름"] = U.apply(flow, axis=1)
+    return U
+
+
 def unified(J, TW, ST, MD, tol=1000):
     """(작물, 시장, 출하일) 한 줄 = 그날 출고가 경매·정산·입금·명세표까지 맞는지.
     반환 열: 작물, 시장, 날짜(출하일), 출고박스, 장부금액, 미정박스, 확인박스, 미확인박스, 경매금액, 경매일, 팩스상태,
@@ -553,8 +601,11 @@ def unified(J, TW, ST, MD, tol=1000):
         st_.loc[st_["입금대조"].astype(str).str.startswith("운송비 차감 추정"), "_r"] = 0.7
         st_["_r"] = st_["_r"].fillna(0)
         s1 = lambda x: x.sum(min_count=1)
-        g = st_.groupby(["작물", "시장", "출하일"]).agg(판매대금=("판매대금", s1), 수수료=("수수료", s1), 지급액=("지급액", s1),
-                                                     입금액=("입금액", s1), _r=("_r", "max")).reset_index().rename(columns={"출하일": "날짜"})
+        for c in ("운임", "기타공제"):
+            if c not in st_:
+                st_[c] = np.nan
+        g = st_.groupby(["작물", "시장", "출하일"]).agg(판매대금=("판매대금", s1), 수수료=("수수료", s1), 운임=("운임", s1), 기타공제=("기타공제", s1),
+                                                     지급액=("지급액", s1), 입금액=("입금액", s1), _r=("_r", "max")).reset_index().rename(columns={"출하일": "날짜"})
         g["입금상태"] = g["_r"].map({3: "입금 못 찾음", 2: "아직 입금 전", 1: "입금 확인", 0.7: "입금 확인(운송비 차감)", 0.5: "입금 확인(추정)", 0: ""})
         U = U.merge(g.drop(columns="_r"), on=keys, how="left")
         U = _share_settlements(U, st_, tol)
@@ -579,6 +630,7 @@ def unified(J, TW, ST, MD, tol=1000):
     U["출고박스"] = U["출고박스"].fillna(U["장부박스"])
     U["재정산"] = U["재정산"].astype("boolean").fillna(False).astype(bool) if "재정산" in U else False
     U = _price_swaps(U, TW)
+    U = money_chain(U, tol)
 
     def judge(r):
         red, ref, wait = [], [], []
@@ -625,6 +677,12 @@ def unified(J, TW, ST, MD, tol=1000):
                 ref.append(f"명세표 금액 다름({(stm or 0) - (led or 0):+,.0f}원)")
         elif s == "장부에 없음":
             ref.append("장부에 없음(명세표에만 있음)")
+        # 명세표(경리나라 공급가액) ↔ 시장 정산 판매대금 — 장부와는 같아도 정산과 다르면 세금계산서가 틀어진다 (v1.31.0)
+        mc = str(r.get("명세표대조") or "")
+        if mc.startswith("다름") and not any("명세표" in x for x in red + ref):
+            dv = (r["명세표"] or 0) - ((auc if pd.notna(auc) and auc else r["판매대금"]) or 0)
+            if abs(dv) > max(tol, 0.01 * abs(r["명세표"] or 0)):          # 1% 안 차이(동화 재정산 끝자리 등)는 💰 표에서만
+                ref.append(f"명세표가 경매 금액과 다름({dv:+,.0f}원)")
         # '명세표에 없음'·'명세표 아직 없음'은 표시하지 않는다 — 명세표는 바로바로 만들어지지 않음 (v1.29.2, 사용자 요청)
         if (r["출고박스"] or 0) == 0 and (pd.notna(auc) and auc or pd.notna(r["지급액"]) and r["지급액"]):
             # 장부엔 그날 그 작물 출고가 없는데 팩스·정산에는 있음 — 한 장에 두 작물이 섞인 정산서(소량)면 참고, 아니면 확인
