@@ -104,6 +104,23 @@ PRODUCTS = {
     'costino':  {'name': '코티노스 올리브유 감자칩', 'unit': '봉', 'kind': '감자칩'},   # 2026-10 새 제품(올리브유 감자칩 위탁생산). 처음 '코스티노'로 적었다가 '코티노스'로 정정(2026-11-03, 정미씨)
 }
 
+# 원본 문서(업무보고서·작업지시서·결재요청서 등)에 잘못 적힌 이름을 화면에서 바로잡는다 — 원본 파일은 손대지 않음.
+# 2026-11-03 정미씨: 감자칩 이름은 '코스티노'가 아니라 '코티노스'(10월 문서에 코스티노로 적힌 것이 많음).
+TEXT_FIXES = [('코스티노', '코티노스')]
+
+def fix_text(obj):
+    """출력 JSON 안의 모든 문자열에 TEXT_FIXES 를 적용 (dict·list 재귀)."""
+    if isinstance(obj, str):
+        for a, b in TEXT_FIXES:
+            if a in obj:
+                obj = obj.replace(a, b)
+        return obj
+    if isinstance(obj, dict):
+        return {k: fix_text(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [fix_text(v) for v in obj]
+    return obj
+
 def product_of_title(title):
     t = norm(title)
     if '코티노스' in t or '코스티노' in t or '올리브유감자칩' in t: return 'costino'
@@ -171,9 +188,9 @@ def classify(path):
         return ('note', None)
     if '파렛트' in h:
         return ('pallet', None)
-    if '전처리' in h and '반제품' in h:      # 코스티노: '전처리 반제품'(전처리해서 만든 반제품 kg) — 사용량과 따로
+    if '전처리' in h and '반제품' in h:      # 코티노스: '전처리 반제품'(전처리해서 만든 반제품 kg) — 사용량과 따로
         return ('semiMade', None)
-    if '반제품' in h and '재고' in h:        # 코스티노: '재고(반제품)'
+    if '반제품' in h and '재고' in h:        # 코티노스: '재고(반제품)'
         return ('semi', None)
     if '전처리' in h:
         return ('preUse', None)
@@ -1549,7 +1566,7 @@ def build(src, outdir, today=None, progress=print):
                        'source': src, 'sources': sources, 'productFiles': prod_files, 'errors': errors},
     }
     for name, body in docs.items():
-        _write_json(os.path.join(outdir, name + '.json'), body)
+        _write_json(os.path.join(outdir, name + '.json'), fix_text(body))
     return len(docs)
 
 
