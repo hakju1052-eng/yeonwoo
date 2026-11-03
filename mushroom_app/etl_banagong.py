@@ -8,7 +8,7 @@
   부자재및부재료 수불부\\부재료·부자재수불부.xlsx
   가공 근로자\\*근무일지*.xlsx, 추가수당*.xlsx;  근무조 편성 및 작업지시서\\*.xlsx
   보일러가동일지\\*.xlsx;  일일 업무보고서.hwp (~2026-10-06, olefile 필요 — 없으면 자동 설치 시도)
-  반가공일일업무보고서2026.10월~\\반가공 일일업무보고서.xlsx (2026-10-07~, 하루 한 시트)
+  반가공일일업무보고서2026.10월~\\(YYMM\\)*일일업무보고서.xlsx (2026-10-07~, 하루 한 시트, 2026-11 부터 달별 하위 폴더)
 
 출력: CACHE_DIR\\banagong\\<collection>__<doc>.json
   meta__info, prod__summary, prod__daily, sales__all, purchase__all, stock__ledgers, labor__all, equip__boiler, reports__all
@@ -101,12 +101,12 @@ PRODUCTS = {
     'mattang':  {'name': '생고구맛탕칩', 'unit': '봉', 'kind': '고구마칩'},
     'stick':    {'name': '고구마스틱', 'unit': '', 'kind': '고구마 반가공'},
     'cube':     {'name': '허니맛탕큐브', 'unit': '', 'kind': '고구마 반가공'},
-    'costino':  {'name': '코스티노 올리브유 감자칩', 'unit': '봉', 'kind': '감자칩'},   # 2026-10 새 제품(올리브유 감자칩 위탁생산)
+    'costino':  {'name': '코티노스 올리브유 감자칩', 'unit': '봉', 'kind': '감자칩'},   # 2026-10 새 제품(올리브유 감자칩 위탁생산). 처음 '코스티노'로 적었다가 '코티노스'로 정정(2026-11-03, 정미씨)
 }
 
 def product_of_title(title):
     t = norm(title)
-    if '코스티노' in t or '올리브유감자칩' in t: return 'costino'
+    if '코티노스' in t or '코스티노' in t or '올리브유감자칩' in t: return 'costino'
     if '크런틴' in t: return 'crunteen'
     if '호미칩' in t: return 'homi'
     if '달콤바삭' in t: return 'dalkom'
@@ -1304,7 +1304,9 @@ def parse_reports_xlsx(src):
     files = []
     for folder in sorted(glob.glob(os.path.join(src, '반가공일일업무보고서*'))):
         if os.path.isdir(folder):
-            files += [f for f in sorted(glob.glob(os.path.join(folder, '*.xls*'))) if not os.path.basename(f).startswith('~$')]
+            # 2026-11 부터 달별 하위 폴더(2610\, 2611\)에 '2611 반가공 일일업무보고서.xlsx' — 하위 폴더까지 읽는다. ._DAV(동기화 임시) 제외
+            files += [f for f in sorted(glob.glob(os.path.join(folder, '**', '*.xls*'), recursive=True))
+                      if not os.path.basename(f).startswith('~$') and '._DAV' not in f.replace('\\', '/').split('/')]
     if not files:
         return None
     reports, stamps = [], []
