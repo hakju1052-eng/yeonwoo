@@ -27,6 +27,13 @@ def main():
         print(f"반가공 현황: {n_b}개 문서 ({time.time()-t3:.0f}초)")
     except Exception as e:
         print(f"반가공 현황: 건너뜀 ({e})")
+    t3b = time.time()
+    try:   # 업무일지 (Z:\업무일지 → mirror_nas 5e 사본) — 바뀐 파일만 (v1.32.0)
+        from . import etl_worklog
+        n_wl = etl_worklog.run(progress=lambda s: print("  " + s, flush=True))
+        print(f"업무일지: {n_wl}개 파일 새로 읽음 ({time.time()-t3b:.0f}초)")
+    except Exception as e:
+        print(f"업무일지: 건너뜀 ({e})")
     t4 = time.time()
     try:   # 팩스 판매원표(경리 SynologyDrive\스캔) — 새 파일만 AI 로 읽음 (v1.26.0)
         from . import etl_fax, ai_chat          # config 는 위에서 이미 C 로 들여옴 — 여기서 다시 들여오면 main() 안의 C 가 지역변수가 돼 첫 줄에서 깨짐 (v1.29.5 고침)

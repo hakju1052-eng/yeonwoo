@@ -2935,6 +2935,9 @@ def main():
         page_anomalies(v)
     elif page == "수리 이력":
         page_repairs(v, me)
+    elif page == "업무일지":
+        from mushroom_app import page_worklog as PW
+        PW.render(v)
     elif page == "보고서":
         page_report(v)
     elif page == "자료실":
