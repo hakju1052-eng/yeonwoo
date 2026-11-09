@@ -1458,6 +1458,8 @@ def run(progress=None, force=False):
             mt = os.path.getmtime(path)
             prev_rows = (st.get(key, {}).get("rows") or {}) if isinstance(st.get(key), dict) else {}
             lost = [k for k, v in prev_rows.items() if v and k in have and not have[k].get(key)]
+            if lost and st.get(key, {}).get("relost") == mt:
+                lost = []       # 이 수정시각으로 이미 한 번 다시 읽었는데 또 밀려남 = 다른 파일(복사본 등)에 같은 날짜가 있음 → 되풀이하지 않음
             if st.get(key, {}).get("mtime") == mt and not (rule_kinds & set(prev_rows)) and not lost:
                 continue
             if lost and progress:
@@ -1483,6 +1485,8 @@ def run(progress=None, force=False):
                 data[k] = pd.concat([data[k], df], ignore_index=True)
                 changed.add(k)
             st[key] = {"mtime": mt, "rows": {k: int(len(v)) for k, v in res.items()}, "read": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}
+            if lost:
+                st[key]["relost"] = mt
             if LEDGER_DROPPED.get(key):
                 st[key]["dropped"] = f"파일 달과 다른 행 {LEDGER_DROPPED[key]}개 버림(입출고내역)"
             if MONTH_DROPPED.get(key):
