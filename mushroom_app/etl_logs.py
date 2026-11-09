@@ -385,6 +385,30 @@ def parse_ss_room_qc(path):
 
 
 LEDGER_DROPPED = {}      # 파일 → 다른 달이라 버린 행 수 (parse_ledger)
+MONTH_DROPPED = {}       # 파일 → 파일 이름의 달과 다른 날짜라 버린 행 수 (_keep_file_month)
+MONTH_DATASETS = ("paengi_daily", "paengi_harvest", "paengi_qc", "ss_daily", "ss_events", "ss_kgcat", "ss_room_pack")
+_FILE_MONTH = re.compile(r"(20\d{2})\s*년\s*(\d{1,2})\s*월")
+
+
+def _keep_file_month(path, res):
+    """'2026년 11월 …일지.xlsx'처럼 이름에 연·월이 있는 달별 파일은 그 달 날짜(date) 행만 남긴다 (v1.32.1).
+    지난달 파일을 복사해 새 달 파일을 만들면 지난달 시트가 한동안 남는데, 그 행이 지난달 파일 행을 밀어내지 않게 한다."""
+    m = _FILE_MONTH.search(os.path.basename(path))
+    if not m or not isinstance(res, dict):
+        return res
+    y, mo = int(m.group(1)), int(m.group(2))
+    out, n = {}, 0
+    for k, df in res.items():
+        if k in MONTH_DATASETS and df is not None and not df.empty and "date" in df:
+            d = pd.to_datetime(df["date"], errors="coerce")
+            ok = (d.dt.year == y) & (d.dt.month == mo)
+            n += int((~ok).sum())
+            df = df[ok]
+        out[k] = df
+    MONTH_DROPPED[path] = n
+    return out
+
+
 PARSE_RULES = {"ledger": 3}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
 
 
@@ -1422,6 +1446,10 @@ def run(progress=None, force=False):
     live = set()
     old_rules = st.get("_rules", {}) if isinstance(st.get("_rules"), dict) else {}
     rule_kinds = {k for k, v in PARSE_RULES.items() if old_rules.get(k) != v}      # 규칙이 바뀐 자료 — 그 자료가 든 파일은 다시 읽음
+    # 자료별로 아직 남아 있는 파일(_src)별 행 수. 전에 읽었다고 기록돼 있는데 한 줄도 안 남은 파일은 다시 읽는다 (v1.32.1)
+    # (예: 다음 달 파일을 지난달 파일 복사로 만들면 '같은 날짜는 나중 파일' 규칙에 지난달 파일 행이 밀려나고,
+    #  그 뒤 다음 달 파일에서 지난달 시트를 지우면 지난달 행이 통째로 사라졌다 — 2026-10 새송이 일일작업일지)
+    have = {k: (df._src.value_counts().to_dict() if not df.empty and "_src" in df else {}) for k, df in data.items()}
     for kind, path, fn in source_files():
         if True:
             base = os.path.basename(path)
@@ -1429,10 +1457,14 @@ def run(progress=None, force=False):
             live.add(key)
             mt = os.path.getmtime(path)
             prev_rows = (st.get(key, {}).get("rows") or {}) if isinstance(st.get(key), dict) else {}
-            if st.get(key, {}).get("mtime") == mt and not (rule_kinds & set(prev_rows)):
+            lost = [k for k, v in prev_rows.items() if v and k in have and not have[k].get(key)]
+            if st.get(key, {}).get("mtime") == mt and not (rule_kinds & set(prev_rows)) and not lost:
                 continue
+            if lost and progress:
+                progress(f"다시 읽음(남은 행 없음: {', '.join(lost)}) {base}")
             try:
                 res = fn(path)
+                res = _keep_file_month(path, res)
             except Exception as e:                       # 한 파일이 깨져도 나머지는 진행
                 # 패키지가 없어 못 읽은 파일(.xls 의 xlrd 등)은 수정시각을 남기지 않아 다음 갱신 때 다시 시도한다
                 st[key] = {"mtime": None if isinstance(e, ImportError) else mt, "error": f"{type(e).__name__}: {e}"}
@@ -1453,6 +1485,8 @@ def run(progress=None, force=False):
             st[key] = {"mtime": mt, "rows": {k: int(len(v)) for k, v in res.items()}, "read": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}
             if LEDGER_DROPPED.get(key):
                 st[key]["dropped"] = f"파일 달과 다른 행 {LEDGER_DROPPED[key]}개 버림(입출고내역)"
+            if MONTH_DROPPED.get(key):
+                st[key]["dropped_month"] = f"파일 달과 다른 날짜 행 {MONTH_DROPPED[key]}개 버림(지난달 복사본 시트 등)"
             n += 1
             if progress:
                 progress(f"읽음 {base}")
