@@ -27,6 +27,7 @@ def signature():
     for f in glob.glob(os.path.join(C.CACHE_DIR, "*.parquet")):
         sig.append((os.path.basename(f), _mt(f)))
     sig.append(("fax/index.json", _mt(os.path.join(C.CACHE_DIR, "fax", "index.json"))))
+    sig.append(("talk/index.json", _mt(os.path.join(C.CACHE_DIR, "talk", "index.json"))))      # 톡방 출하지시서 (v1.33.0)
     sig.append(("market_deposits.src", _mt(os.path.join(C.CACHE_DIR, "market_deposits.parquet.src"))))
     try:
         base = O.root()

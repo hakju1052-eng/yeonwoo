@@ -629,6 +629,30 @@ def unified(J, TW, ST, MD, tol=1000):
         U = U.drop(columns=["_fs"])
     U["출고박스"] = U["출고박스"].fillna(U["장부박스"])
     U["재정산"] = U["재정산"].astype("boolean").fillna(False).astype(bool) if "재정산" in U else False
+    # 톡방 출하지시서(안석구 팀장 사진) — 그날 시장별 지시 박스. 장부 입력 전에도 팩스와 견줄 수 있다 (v1.33.0)
+    try:
+        from . import etl_talk
+        O = etl_talk.orders_by_day()
+    except Exception:
+        O = None
+    if O is not None and len(O):
+        U = U.merge(O, on=keys, how="outer")
+        for c in ("명세표상태", "팩스상태", "입금상태", "경매일"):
+            U[c] = U[c].fillna("")
+        U["재정산"] = U["재정산"].fillna(False).astype(bool)
+        # 장부가 아직 없는 날은 팩스 판매원표 박스(판매일 = 출하 다음 날)를 직접 세어 지시와 견준다
+        F_ = TW.get("fax") if isinstance(TW, dict) else None
+        if F_ is not None and len(F_) and "박스" in F_:
+            fb = F_[F_["종류"] != "합계만"].groupby(["작물", "시장", "판매일"])["박스"].sum().reset_index()
+            fb["날짜"] = fb["판매일"] - pd.Timedelta(days=1)
+            fb = fb.rename(columns={"박스": "_팩스박스_직접"})[keys + ["_팩스박스_직접"]]
+            U = U.merge(fb, on=keys, how="left")
+            if "팩스박스" not in U:
+                U["팩스박스"] = np.nan
+            U["팩스박스"] = U["팩스박스"].fillna(U["_팩스박스_직접"])
+            U = U.drop(columns=["_팩스박스_직접"])
+    else:
+        U["지시박스"] = np.nan; U["지시파일"] = ""
     U = _price_swaps(U, TW)
     U = money_chain(U, tol)
 
@@ -690,6 +714,21 @@ def unified(J, TW, ST, MD, tol=1000):
             (ref if amt < 500000 else red).append(f"장부엔 출고 없음, 시장 정산에만 있음({amt:,.0f}원)")
         if f == "재정산" and not any("재정산" in x for x in red + ref):
             ref.append(f"재정산(팩스 첫 경락과 {(auc or 0) - (led or 0):+,.0f}원)")
+        # 출하지시서(톡방 사진) 박스 ↔ 장부 출고 박스 / 팩스 박스 (v1.33.0). 장부가 아직 없으면 지시만 적어 둔다
+        od = r.get("지시박스")
+        if pd.notna(od):
+            out_ = r["출고박스"]
+            fxb = r.get("팩스박스")
+            if pd.notna(out_) and out_ > 0:
+                if abs(out_ - od) >= 1:
+                    ref.append(f"출하지시서 {od:,.0f}박스 ≠ 장부 {out_:,.0f}박스")
+            elif pd.notna(fxb) and fxb > 0:
+                if abs(fxb - od) >= 1:
+                    ref.append(f"출하지시서 {od:,.0f}박스 ≠ 팩스 {fxb:,.0f}박스(장부 입력 전)")
+                else:
+                    wait.append(f"장부 입력 전(지시 {od:,.0f}박스 = 팩스)")
+            else:
+                wait.append(f"장부·팩스 전(출하지시서 {od:,.0f}박스)")
         if f == "일치(합계)" and not red:
             pass
         if red:
@@ -702,7 +741,8 @@ def unified(J, TW, ST, MD, tol=1000):
     for c in ("판매대금", "수수료", "지급액", "입금액", "경매금액"):
         U[c] = U[c].round(0)
     # 장부 출고도, 경매도, 정산도 없는 빈 줄(팩스 판매일을 출하일로 옮기다 생긴 자리)은 뺀다 (v1.27.4)
-    ghost = (U["출고박스"].fillna(0) == 0) & (U["장부금액"].fillna(0) == 0) & (U["경매금액"].fillna(0) == 0) & U["지급액"].isna() & (U["명세표"].fillna(0) == 0)
+    ghost = (U["출고박스"].fillna(0) == 0) & (U["장부금액"].fillna(0) == 0) & (U["경매금액"].fillna(0) == 0) & U["지급액"].isna() & (U["명세표"].fillna(0) == 0) \
+        & U["지시박스"].isna()
     U = U[~ghost].copy()
     out = U.apply(judge, axis=1, result_type="expand")
     U["등급"], U["문제"] = out[0], out[1]

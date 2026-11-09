@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.32.1"
+VERSION = "1.33.0"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -231,4 +231,7 @@ def ensure_dirs():
 # 업무자료 사본 폴더(copy_banagong.bat 이 \\jinsung\반가공\업무자료 → Downloads\반가공자료 로 복사) 후보 — 처음 있는 곳을 쓴다
 BANAGONG_SRC = [os.path.join(HOME, "Downloads", "반가공자료")]
 BANAGONG_CACHE = os.path.join(CACHE_DIR, "banagong")           # 화면용 JSON
+# 카카오톡 팀 채팅방(연우/진성 관리자 업무방) 사진 — Claude 예약 작업이 톡클라우드에서 받아 두는 곳과 판독 결과 (v1.33.0)
+TALK_DIR = os.path.join(DATA_DIR, "톡클라우드")
+TALK_CACHE = os.path.join(CACHE_DIR, "talk")
 BANAGONG_COPY_BAT = os.path.join(HOME, "Downloads", "copy_banagong.bat")

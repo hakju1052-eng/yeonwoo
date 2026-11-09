@@ -183,7 +183,27 @@ def _status(recs, today):
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def _talk_docs(q):
+    """톡방(연우/진성 관리자 업무방)에 올라온 사진 — 누가 언제 무엇을 올렸나 (v1.33.0)."""
+    try:
+        from . import etl_talk
+        T = etl_talk.docs()
+    except Exception:
+        return
+    if T is None or T.empty:
+        return
+    st.markdown("**톡방에 올린 사진** (톡클라우드 → 매일 08:20·14:20 받아 읽음)")
+    if q:
+        m = T["제목"].str.contains(q, case=False, na=False) | T["메모"].str.contains(q, case=False, na=False) | T["올린사람"].str.contains(q, case=False, na=False)
+        T = T[m]
+    T = T.copy()
+    T["올린시각"] = T["올린시각"].dt.strftime("%m/%d %H:%M")
+    st.dataframe(T[["올린시각", "올린사람", "종류", "제목", "메모", "파일"]].head(200), hide_index=True, use_container_width=True, height=min(400, 38 + 35 * min(len(T), 10)))
+    st.caption("출하지시서는 시장별 지시 박스를 읽어 경영 자료 → 출하 대사에 '지시 박스'로 넣습니다. 엑셀 화면 캡처는 제목만 남기고 숫자는 원본 엑셀에서 읽습니다.")
+
+
 def _docs(D, q):
+    _talk_docs(q)
     docs = D.get("docs", [])
     if docs:
         st.markdown("**날짜 없는 문서** (시험결과 보고서 등 — 앞부분만)")

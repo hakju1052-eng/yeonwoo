@@ -680,9 +680,10 @@ def _grade_table(D, J, X, pick, crop, ent, mk, show, has_stmt=True):
         st.success("해당하는 거래가 없습니다 — 이 달 출고는 경매·정산·입금까지 모두 맞습니다." if show == "🔴 확인 필요만" else "해당하는 거래가 없습니다.")
     else:
         T = pd.DataFrame({"": Z["등급"].map(GRADE_ICON), "출하일": Z["날짜"].dt.strftime("%m/%d"), "작물": Z["작물"], "시장": Z["시장"], "문제": Z["문제"],
-                          "출고 박스": Z["출고박스"], "장부 금액": Z["장부금액"], "경매 금액": Z["경매금액"], "경매일": Z["경매일"],
+                          "출고 박스": Z["출고박스"], **({"지시 박스": Z["지시박스"]} if "지시박스" in Z and Z["지시박스"].notna().any() else {}),
+                          "장부 금액": Z["장부금액"], "경매 금액": Z["경매금액"], "경매일": Z["경매일"],
                           "지급액": Z["지급액"], "입금": Z["입금액"], **({"명세표 금액": Z["명세표"].where(Z["명세표"].fillna(0) != 0)} if has_stmt else {})})
-        numc = ["출고 박스", "장부 금액", "경매 금액", "지급액", "입금"] + (["명세표 금액"] if has_stmt else [])   # 명세표는 받은 달만 (v1.31.3)
+        numc = ["출고 박스"] + (["지시 박스"] if "지시 박스" in T else []) + ["장부 금액", "경매 금액", "지급액", "입금"] + (["명세표 금액"] if has_stmt else [])   # 명세표는 받은 달만 (v1.31.3), 지시 박스는 톡방 출하지시서가 있을 때 (v1.33.0)
         # 숫자가 없는 칸은 'None' 대신 빈칸(글자로 바꿔서) — 지급액이 비면 '정산서가 없어 모름'이지 '입금 못 찾음'이 아니다
         for c in numc:
             T[c] = pd.to_numeric(T[c], errors="coerce").map(lambda v: "" if pd.isna(v) else f"{v:,.0f}")
@@ -701,7 +702,7 @@ def _grade_table(D, J, X, pick, crop, ent, mk, show, has_stmt=True):
         tkey = f"rc_tbl_{pick}_{crop}_{ent}_{mk}_{show}"
         ev = st.dataframe(sty, hide_index=True, **_FULL, height=min(60 + 35 * len(T), 480), key=tkey,
                           on_select="rerun", selection_mode="single-row",
-                          column_config=_colw({"": 36, "출하일": 56, "작물": 56, "시장": 92, "문제": 250, "출고 박스": 72, "장부 금액": 92, "경매 금액": 92,
+                          column_config=_colw({"": 36, "출하일": 56, "작물": 56, "시장": 92, "문제": 250, "출고 박스": 72, "지시 박스": 64, "장부 금액": 92, "경매 금액": 92,
                                                "경매일": 60, "지급액": 92, "입금": 100, "명세표 금액": 100}))
         try:
             rows = list(ev.selection.rows) if ev is not None else []
