@@ -335,6 +335,48 @@ def page_overview(ver):
                 st.caption("자세한 내용은 왼쪽 **이상 감시** 페이지")
 
 
+# ───────────────────────── 배치 탐색기: 수출 포장 후보(수확 예정 방의 예상 QC) ─────────────────────────
+def export_candidates_box(K):
+    """수확 전인 방(생육실·발이실)의 예상 QC 표 — 수출 물량을 어느 방에서 포장할지 미리 고르는 용도 (v1.34.0)."""
+    D, info = A.paengi_export_candidates(K)
+    with st.expander("수출 포장 후보 — 수확 예정 방의 예상 QC", expanded=True):
+        if not info.get("ok"):
+            st.caption(info.get("why") or "예상할 자료가 부족합니다."); return
+        if D.empty:
+            st.caption("수확을 앞둔 방이 없습니다 — 최근 3주 안의 권지·균긁기 기록(배양소관리 또는 재배일보)이 필요합니다."); return
+        line = info["ok_line"]
+        mark = lambda v: ("🟢 " if v.startswith("추천") else ("🔴 " if v.startswith("비추천") else "⚪ ")) + v
+        soon = D[(D["단계"] != "수확 중") & (D["남은일"] <= 7)]
+        good = soon[soon["수출후보"] == "추천"]["생육실"].tolist()
+        bad = D[(D["단계"] != "수확 중") & D["수출후보"].str.startswith("비추천")]
+        c1, c2, c3 = st.columns([2, 2, 3])
+        c1.metric("7일 안에 수확할 방", f"{len(soon)}개", f"추천 {len(good)}개", delta_color="off")
+        c2.metric("추천 방 (7일 안)", ", ".join(x.replace("생육실", "") for x in good) + "번" if good else "—")
+        c3.metric("피할 방 (수확 예정 전체)", ", ".join(f"{r['생육실'].replace('생육실', '').replace('(예상)', '')}번({r['예상수확'].strftime('%m/%d')})" for _, r in bad.iterrows()) if len(bad) else "없음")
+        only = st.checkbox("추천만 보기", value=False, key="bx_export_only")
+        V = D[D["수출후보"].str.startswith("추천")] if only else D
+        V = V.assign(수출후보=V["수출후보"].map(mark), 남은일=V["남은일"].map(lambda d: "오늘" if d == 0 else (f"D-{d}" if d > 0 else f"{-d}일 전 시작")))
+        st.dataframe(V[["수출후보", "단계", "생육실", "예상수확", "남은일", "예상QC", "예상판정", "실제QC", "긁기불량률%", "권지불량률%", "균긁기일", "권지일", "발이실", "메모"]],
+                     hide_index=True, **_FULL, height=min(38 * (len(V) + 1) + 3, 420),
+                     column_config={"예상수확": st.column_config.DateColumn("예상 수확", format="MM-DD", help=f"균긁기(발이실 입상) 뒤 {info['수확일수']}일째(최근 완료 배치의 중앙값). 수확은 보통 2~3일에 걸쳐 합니다. '수확 중'인 방은 실제 수확 시작일"),
+                                    "남은일": st.column_config.TextColumn("남은 날"),
+                                    "예상QC": st.column_config.NumberColumn("예상 QC", format="%.1f", help="균긁기·권지 불량률로 계산한 본수확 QC 예상값(100점). 오차가 ±2점쯤이라 0.몇 점 차이는 뜻이 없습니다"),
+                                    "예상판정": st.column_config.TextColumn("예상 판정", help="예상 QC 를 품질 기준서 앵커에 대 본 것: 85 이상 양호 · 79 이상 보통 · 그 미만 미흡"),
+                                    "실제QC": st.column_config.NumberColumn("실제 QC", format="%.1f", help="수확을 시작한 방의 본수확 QC(여러 날이면 평균). 이 값이 나오면 예상보다 이 값을 믿으세요"),
+                                    "긁기불량률%": st.column_config.NumberColumn("긁기 불량 %", format="%.2f"), "권지불량률%": st.column_config.NumberColumn("권지 불량 %", format="%.2f"),
+                                    "균긁기일": st.column_config.DateColumn("균긁기", format="MM-DD"), "권지일": st.column_config.DateColumn("권지", format="MM-DD"),
+                                    "생육실": st.column_config.TextColumn(help="발이실 단계인 방은 생육실이 1→12번 순서로 돌아가는 것을 따라 다음 차례를 '(예상)'으로 적었습니다"),
+                                    "메모": st.column_config.TextColumn("현장 메모", help="재배일보 균긁기·권지 시트의 비고")})
+        txt = (f"보는 법: 🟢 추천 = 예상 QC {info['hi']:.0f}점 이상(불량 신호 없음) · ⚪ 보통 = {info['lo']:.0f}\\~{info['hi']:.0f}점 · 🔴 비추천 = {info['lo']:.0f}점 미만. "
+               f"'(잠정)'은 아직 발이실이라 균긁기 불량률만으로 본 것이고, '(실측)'은 이미 나온 본수확 QC 로 매긴 것입니다. ")
+        if info.get("val_n"):
+            txt += (f"검증(QC 서식 {info['fmt']} 완료 배치 {info['val_n']}개를 그 전 자료만으로 예상해 봄): 추천 {info['추천_n']}개 중 **{info['추천_ok%']:.0f}%** 가 실제 QC {line:.0f}점(보통) 이상, "
+                    f"보통 {info['보통_n']}개 중 {info['보통_ok%']:.0f}%, 비추천 {info['비추천_n']}개 중 {info['비추천_ok%']:.0f}% · 예상 오차 평균 ±{info['mae']:.1f}점. ")
+        txt += ("수확 전에 QC 를 가르는 신호는 균긁기·권지 불량률뿐이었습니다(배양·발이·생육 환경, 배양일수, 방 번호는 관계가 약함). "
+                "그래서 추천 방끼리의 순위는 매기지 않습니다 — 불량이 많았던 방을 미리 빼는 용도로 쓰고, 수확 첫날 QC 가 나오면 그 값으로 확정하세요.")
+        st.caption(txt)
+
+
 # ───────────────────────── 페이지: 배치 탐색기 ─────────────────────────
 def page_batches(ver, crop):
     st.title(f"배치 탐색기 — {crop}")
@@ -343,6 +385,7 @@ def page_batches(ver, crop):
         K, PE = load_paengi(ver)
         if K.empty:
             st.info("팽이 배치가 없습니다. 배양소관리(권지 시트)와 팽이 일지가 필요합니다."); return
+        export_candidates_box(K)
         T = K.copy()
         T["방"] = T["생육실"].map(lambda r: f"생육실{int(r):02d}")
         T["발이"] = T["발이실"].map(lambda r: f"발이실{int(r):02d}" if pd.notna(r) else "—")

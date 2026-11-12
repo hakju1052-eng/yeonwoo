@@ -16,6 +16,7 @@ STATE = os.path.join(C.CACHE_DIR, "logs_state.json")
 DATASETS = ["paengi_daily", "paengi_harvest", "paengi_qc", "ss_daily", "ss_events", "ss_kgcat",
             "ss_room_pack", "ss_room_in", "ss_room_qc",
             "cult_inoc", "cult_scrape_paengi", "cult_scrape_ss", "cult_kwonji",
+            "kwon_scrape_paengi", "kwon_kwonji",
             "bottling", "materials", "materials_block", "electric", "fuel", "ledger",
             "spawn_tanks", "tank_daily", "loads", "sales", "repairs", "repair_costs"]
 
@@ -409,7 +410,7 @@ def _keep_file_month(path, res):
     return out
 
 
-PARSE_RULES = {"ledger": 3}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
+PARSE_RULES = {"ledger": 3, "bottling": 2}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
 
 
 def parse_ledger(wb, crop, path):
@@ -464,12 +465,13 @@ def _fnum(v):
 def parse_bottling(path):
     """팽이재배일보 / 새송이작업일보 '종합관리' 시트 → 날짜별 입병 병수(혼합기별 수량 합), 살균 수량, 입병 회수."""
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    extra = _parse_kwon_chain(wb) if "팽이" in os.path.basename(path) else {}
     if "종합관리" not in wb.sheetnames:
-        return {}
+        return extra
     rows = list(wb["종합관리"].iter_rows(values_only=True))
     hdr_i = next((i for i, r in enumerate(rows[:10]) if r and r[0] == "입병일"), None)
     if hdr_i is None:
-        return {}
+        return extra
     hdr = [str(c).replace("\n", "").strip() if c else "" for c in rows[hdr_i]]
     ci = next((i for i, h in enumerate(hdr) if h.startswith("혼합기별")), None)
     cs = next((i for i, h in enumerate(hdr) if h.startswith("살균수량")), None)
@@ -490,7 +492,63 @@ def parse_bottling(path):
         sv = r[cs] if cs is not None and cs < len(r) else None
         a["sterilized"] += sv if isinstance(sv, (int, float)) else 0
         a["batches"] += 1
-    return {"bottling": pd.DataFrame(list(agg.values()))}
+    return dict(extra, bottling=pd.DataFrame(list(agg.values())))
+
+
+def _parse_kwon_chain(wb):
+    """팽이재배일보의 '균긁기'·'권지' 시트 (재배 관리자가 날마다 적는 배지입고 검수·권지 작업 현황) (v1.34.0).
+    배양센터의 배양소관리(권지·균긁기 시트)는 달이 바뀌면 한동안 비어 있는 일이 있어(2026-11: 12일까지 11월 블록이 빔),
+    그동안은 이 기록으로 사슬(균긁기 → 권지 → 수확)을 잇는다. 숫자는 두 문서가 같다(작업수량·LOSS).
+      kwon_scrape_paengi: 긁기일·접종일·배양출고(작업수량)·불량(LOSS)·균긁기량(입상량)·방(발이실)·비고
+      kwon_kwonji      : 권지일·입상일(균긁기일)·발이실·생육실·입상량(작업수량)·불량(LOSS)·권지작업량(권지수량)·비고"""
+    out = {}
+
+    def table(name, first):
+        if name not in wb.sheetnames:
+            return None, []
+        rows = list(wb[name].iter_rows(values_only=True))
+        hi = next((i for i, r in enumerate(rows[:8]) if r and str(r[0] or "").replace(" ", "") == first), None)
+        if hi is None:
+            return None, []
+        hdr = [str(c).replace("\n", "").replace(" ", "") if c is not None else "" for c in rows[hi]]
+        return hdr, rows[hi + 1:]
+
+    def col(hdr, r, *names):
+        for n in names:
+            if n in hdr and hdr.index(n) < len(r):
+                return r[hdr.index(n)]
+        return None
+
+    def memo(v):
+        v = str(v).strip() if v not in (None, "") else ""
+        return v or None
+
+    hdr, rows = table("균긁기", "날짜")
+    S = []
+    for r in rows:
+        d = _ts(r[0] if r else None)
+        q = _fnum(col(hdr, r, "작업수량"))
+        if pd.isna(d) or not q or q <= 0:
+            continue
+        room = re.search(r"(\d+)", str(col(hdr, r, "발이실") or ""))
+        S.append({"긁기일": d, "접종일": _first_date(col(hdr, r, "접종일"), d), "배양출고": q, "불량": _fnum(col(hdr, r, "LOSS")) or 0.0,
+                  "균긁기량": _fnum(col(hdr, r, "입상량")), "방": room.group(1) if room else None, "비고": memo(col(hdr, r, "비고"))})
+    if S:
+        out["kwon_scrape_paengi"] = pd.DataFrame(S)
+    hdr, rows = table("권지", "날짜")
+    K = []
+    for r in rows:
+        d = _ts(r[0] if r else None)
+        q = _fnum(col(hdr, r, "권지수량"))
+        gr = _fnum(col(hdr, r, "생육실"))
+        if pd.isna(d) or not q or q <= 0 or not gr:
+            continue
+        bal = _fnum(col(hdr, r, "발이실"))
+        K.append({"권지일": d, "입상일": _first_date(col(hdr, r, "균긁기일"), d), "발이실": bal if bal and 1 <= bal <= 18 else None, "생육실": gr,
+                  "입상량": _fnum(col(hdr, r, "작업수량")), "불량": _fnum(col(hdr, r, "LOSS")) or 0.0, "권지작업량": q, "비고": memo(col(hdr, r, "비고"))})
+    if K:
+        out["kwon_kwonji"] = pd.DataFrame(K)
+    return out
 
 
 def parse_materials(path):
@@ -1510,6 +1568,7 @@ def run(progress=None, force=False):
                  "electric": ["month", "meter"], "fuel": ["date", "fuel"], "ledger": ["crop", "month", "seq"],
                  "cult_inoc": ["일자", "품목"], "cult_scrape_paengi": ["긁기일", "방", "접종일"],
                  "cult_scrape_ss": ["긁기일", "방", "접종일"], "cult_kwonji": ["권지일", "생육실", "발이실"],
+                 "kwon_scrape_paengi": ["긁기일", "방"], "kwon_kwonji": ["권지일", "생육실"],
                  "spawn_tanks": ["코드", "탱크NO"], "tank_daily": ["date"], "loads": ["crop", "입병일", "입병순번"], "sales": ["crop", "month"],
                  "repairs": ["date", "시트", "내용"], "repair_costs": ["date", "시트", "수리명", "수리비", "내용"]}[k]
         df = df.drop_duplicates(dedup, keep="last")

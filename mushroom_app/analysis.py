@@ -53,18 +53,65 @@ def qc_lookup(room, d0, d1, near=2):
     return (np.nan, None, None)
 
 
+def _paengi_scrapes():
+    """팽이 균긁기(발이실 입상) 기록: 긁기일·방(발이실)별 배양출고·긁기불량·탱크·접종일_긁기·긁기메모.
+    배양소관리(배양센터)가 기본이고, 그 기록이 아직 없는 최근 날짜는 재배일보(재배 관리자)의 균긁기 시트로 메운다 (v1.34.0).
+    두 문서의 숫자는 같다(2026년 겹치는 247일 중 출고 96%·불량 98% 일치)."""
+    P = etl_logs.load("cult_scrape_paengi")
+    S = etl_logs.load("kwon_scrape_paengi")
+    if not P.empty:
+        P = P.dropna(subset=["긁기일"]).copy()
+    if not S.empty:
+        S = S.dropna(subset=["긁기일"]).copy()
+        new = S[S["긁기일"] > P["긁기일"].max()] if not P.empty else S
+        if len(new):
+            P = pd.concat([P, new.assign(탱크=None)[["긁기일", "접종일", "배양출고", "불량", "방", "탱크"]]], ignore_index=True)
+    if P.empty:
+        return pd.DataFrame(columns=["긁기일", "방", "배양출고", "긁기불량", "탱크", "접종일_긁기", "긁기메모"])
+    P["방"] = pd.to_numeric(P["방"], errors="coerce")
+    P = P.groupby(["긁기일", "방"]).agg(배양출고=("배양출고", "sum"), 긁기불량=("불량", "sum"), 탱크=("탱크", "first"), 접종일_긁기=("접종일", "first")).reset_index()
+    if not S.empty and "비고" in S:
+        m = S.dropna(subset=["비고"]).assign(방=lambda d: pd.to_numeric(d["방"], errors="coerce"))[["긁기일", "방", "비고"]].drop_duplicates(["긁기일", "방"]).rename(columns={"비고": "긁기메모"})
+        P = P.merge(m, on=["긁기일", "방"], how="left")
+    else:
+        P["긁기메모"] = None
+    return P
+
+
+def _paengi_kwonji():
+    """팽이 권지(생육실 입실) 기록. 배양소관리가 기본, 아직 안 적힌 최근 날짜는 재배일보의 권지 시트로 메운다 (v1.34.0)."""
+    K = etl_logs.load("cult_kwonji")
+    Q = etl_logs.load("kwon_kwonji")
+    if Q.empty:
+        return K
+    Q = Q.dropna(subset=["권지일", "생육실"]).copy()
+    new = Q[Q["권지일"] > K["권지일"].max()] if not K.empty else Q
+    if len(new):
+        S = etl_logs.load("kwon_scrape_paengi")
+        new = new.copy()
+        if not S.empty:      # 권지 시트에는 접종일이 없다 → 같은 발이실의 균긁기 기록에서 가져온다
+            inoc = S.assign(방=pd.to_numeric(S["방"], errors="coerce")).dropna(subset=["접종일"]).drop_duplicates(["긁기일", "방"]).set_index(["긁기일", "방"])["접종일"]
+            new["접종일"] = [inoc.get((d, r), pd.NaT) for d, r in zip(new["입상일"], new["발이실"])]
+        else:
+            new["접종일"] = pd.NaT
+        new["접종일"] = pd.to_datetime(new["접종일"], errors="coerce")
+        cols = [c for c in ["권지일", "접종일", "입상일", "발이실", "생육실", "입상량", "불량", "권지작업량", "_src"] if c in new]
+        K = pd.concat([K, new[cols]], ignore_index=True) if not K.empty else new[cols]
+    if "비고" in Q:
+        m = Q.dropna(subset=["비고"])[["권지일", "생육실", "비고"]].drop_duplicates(["권지일", "생육실"]).rename(columns={"비고": "권지메모"})
+        K = K.merge(m, on=["권지일", "생육실"], how="left")
+    return K
+
+
 def paengi_chain():
     """권지 일지 기준 사슬: 접종 → 균긁기(발이실 입상) → 권지(생육실 입실) → 수확."""
-    K = etl_logs.load("cult_kwonji")
+    K = _paengi_kwonji()
     if K.empty:
         return pd.DataFrame()
     K = K.dropna(subset=["권지일", "입상일", "생육실"]).copy()
     K["생육실"] = K["생육실"].astype(int)
-    P = etl_logs.load("cult_scrape_paengi")
+    P = _paengi_scrapes()
     if not P.empty:
-        P = P.dropna(subset=["긁기일"]).copy()
-        P["방"] = pd.to_numeric(P["방"], errors="coerce")
-        P = P.groupby(["긁기일", "방"]).agg(배양출고=("배양출고", "sum"), 긁기불량=("불량", "sum"), 탱크=("탱크", "first"), 접종일_긁기=("접종일", "first")).reset_index()
         K = K.merge(P, left_on=["입상일", "발이실"], right_on=["긁기일", "방"], how="left").drop(columns=["긁기일", "방"], errors="ignore")
     J = etl_logs.load("cult_inoc")
     if not J.empty:
@@ -209,6 +256,130 @@ def grade_batches(df, crop):
         why.append(" · ".join(parts) if parts else "")
     df["평가근거"] = why
     return df
+
+
+def paengi_export_candidates(K=None, today=None, look_back=20):
+    """수확 예정 방의 예상 QC — 수출 포장에 쓸 방을 미리 고르기 위한 표 (v1.34.0). 반환: (표, 정보 dict).
+    근거: QC 서식 B(2026-06-19~) 완료 배치에서 본수확 QC 는 균긁기 불량률·권지 불량률과 뚜렷이 반비례한다(순위상관 -0.6 안팎, 같은 달 안에서도 같다).
+    이 둘은 수확 2~4주 전에 이미 적히므로, 같은 서식의 완료 배치로 'QC = a + b·log(1+긁기불량%) + c·log(1+권지불량%)' 를 맞춰 예상 QC 를 낸다.
+      · 생육실 단계(권지 끝남): 두 불량률 모두 사용 · 발이실 단계(권지 전): 긁기 불량률만 사용(잠정)
+      · 후보 구분(예상 QC 를 품질 기준서의 '보통' 기준선과 견줌 — 서식 B 는 79점): 기준선+1 이상 = 추천, 기준선-1 미만 = 비추천, 그 사이 보통
+        불량률 말고는 수확 전에 QC 를 가르는 신호를 찾지 못했다(배양·발이·생육 환경 평균, 배양일수, 방 번호 모두 잔차와 상관 0.2 미만).
+        그래서 '추천' 방끼리의 예상 QC 0.몇 점 차이는 뜻이 없다 — 이 표는 '피해야 할 방'을 가려내는 용도다.
+    정보 dict 의 검증값은 '그 시점까지의 자료만으로 맞춘 식'으로 뒤 배치를 차례로 예상해 본 결과(실제 QC 와 견줌)다.
+    한계: 생육실에서 생기는 문제(환경 사고·병해·키 편차)는 이 식이 모른다 — 수확 첫날 QC 가 나오면 그 값이 우선이다."""
+    K = paengi_chain() if K is None else K
+    cols = ["단계", "생육실", "발이실", "균긁기일", "권지일", "예상수확", "남은일", "긁기불량률%", "권지불량률%", "예상QC", "예상판정", "수출후보", "실제QC", "메모", "bid"]
+    info = {"ok": False, "why": ""}
+    if K is None or K.empty or "QC" not in K:
+        info["why"] = "팽이 배치(권지·수확·QC) 자료가 없습니다."
+        return pd.DataFrame(columns=cols), info
+    today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.now().normalize()
+    done = K[K["완결"].fillna(False) & K["QC"].notna()].sort_values("권지일")
+    if done.empty:
+        info["why"] = "QC 가 적힌 완료 배치가 없습니다."
+        return pd.DataFrame(columns=cols), info
+    fmt = done["QC서식"].dropna().iloc[-1] if done["QC서식"].notna().any() else None
+    T = (done[done["QC서식"] == fmt] if fmt is not None else done).copy()
+    T = T[T["권지불량률%"].notna()]
+    if len(T) < 25:
+        info["why"] = f"같은 QC 서식({fmt})의 완료 배치가 {len(T)}개뿐이라 아직 예상할 수 없습니다(25개 필요)."
+        return pd.DataFrame(columns=cols), info
+    med1 = float(np.log1p(T["긁기불량률%"]).median())
+    lg = lambda v: np.log1p(pd.to_numeric(v, errors="coerce").clip(lower=0))
+    T["x1"] = lg(T["긁기불량률%"]).fillna(med1); T["x2"] = lg(T["권지불량률%"])
+
+    def fit(d, both=True):
+        X = np.c_[np.ones(len(d)), d["x1"].values] if not both else np.c_[np.ones(len(d)), d["x1"].values, d["x2"].values]
+        return np.linalg.lstsq(X, d["QC"].values.astype(float), rcond=None)[0]
+
+    def pred(b, x1, x2=None):
+        return b[0] + b[1] * x1 + (b[2] * x2 if len(b) > 2 and x2 is not None else 0.0)
+
+    bands = getattr(C, "QC_BANDS", {}).get(fmt)
+    ok_line = float(bands[1][0]) if bands and len(bands) > 1 else float(T["QC"].median())     # '보통' 이상 기준(서식 B: 79) — 없으면 중앙값
+    hi, lo = ok_line + 1.0, ok_line - 1.0
+    grade = lambda v: "추천" if v >= hi else ("비추천" if v < lo else "보통")
+
+    # 검증: 그때까지 수확이 끝난 배치만으로 식을 맞춰 다음 배치를 예상(walk-forward)
+    V = []
+    Tr = T.reset_index(drop=True)
+    for i in range(30, len(Tr)):
+        tr = Tr[Tr["수확종료"] < Tr.loc[i, "권지일"]]
+        if len(tr) < 25:
+            continue
+        b = fit(tr)
+        p = float(pred(b, Tr.loc[i, "x1"], Tr.loc[i, "x2"]))
+        p1 = float(pred(fit(tr, both=False), Tr.loc[i, "x1"]))
+        V.append({"p": p, "qc": float(Tr.loc[i, "QC"]), "g": grade(p), "g1": grade(p1)})
+    V = pd.DataFrame(V)
+    b2, b1 = fit(T), fit(T, both=False)
+    info.update({"ok": True, "fmt": fmt, "n": int(len(T)), "ok_line": float(ok_line), "coef": [float(x) for x in b2],
+                 "기간": (T["권지일"].min(), T["권지일"].max()), "hi": hi, "lo": lo})
+    if len(V) >= 15:
+        g = lambda k: V[V.g == k]
+        info.update({"val_n": int(len(V)), "mae": float((V.p - V.qc).abs().mean()),
+                     "추천_n": int(len(g("추천"))), "추천_ok%": float(100 * (g("추천").qc >= ok_line).mean()) if len(g("추천")) else np.nan,
+                     "추천_평균": float(g("추천").qc.mean()) if len(g("추천")) else np.nan,
+                     "보통_ok%": float(100 * (g("보통").qc >= ok_line).mean()) if len(g("보통")) else np.nan,
+                     "비추천_n": int(len(g("비추천"))), "비추천_ok%": float(100 * (g("비추천").qc >= ok_line).mean()) if len(g("비추천")) else np.nan,
+                     "비추천_평균": float(g("비추천").qc.mean()) if len(g("비추천")) else np.nan,
+                     "보통_n": int(len(g("보통"))),
+                     "잠정추천_n": int((V.g1 == "추천").sum()), "잠정추천_ok%": float(100 * (V[V.g1 == "추천"].qc >= ok_line).mean()) if (V.g1 == "추천").any() else np.nan})
+    span = pd.to_numeric(done.tail(30)["총일수"], errors="coerce").dropna()
+    days = int(round(span.median())) if len(span) else 28
+
+    def band(v):
+        if not bands or pd.isna(v):
+            return "—"
+        for lo_, name in bands:
+            if v >= lo_:
+                return name
+        return bands[-1][1]
+
+    rows = []
+    memo_of = lambda b: " / ".join(str(b.get(k)) for k in ("긁기메모", "권지메모") if b.get(k) is not None and str(b.get(k)) not in ("nan", "None", ""))
+    # ① 생육실에 있는 방(권지 끝남, 수확 전) ② 수확 중이거나 방금 끝난 방(실제 QC 가 나온 방)
+    cur = K[(K["권지일"] >= today - pd.Timedelta(days=look_back)) & (K["권지일"] <= today)].sort_values("권지일")
+    for _, b in cur.iterrows():
+        started = pd.notna(b.get("수확시작"))
+        if started and b["수확종료"] < today - pd.Timedelta(days=1):
+            continue
+        x1 = float(lg(pd.Series([b.get("긁기불량률%")])).fillna(med1).iloc[0]); x2 = float(lg(pd.Series([b.get("권지불량률%")])).iloc[0])
+        p = float(pred(b2, x1, x2)) if not np.isnan(x2) else float(pred(b1, x1))
+        est = b["입상일"] + pd.Timedelta(days=days)
+        rows.append({"단계": "수확 중" if started else "생육실", "생육실": f"생육실{int(b['생육실']):02d}", "발이실": f"{int(b['발이실'])}" if pd.notna(b.get("발이실")) else "—",
+                     "균긁기일": b["입상일"], "권지일": b["권지일"], "예상수확": b["수확시작"] if started else est, "남은일": int(((b["수확시작"] if started else est) - today).days),
+                     "긁기불량률%": b.get("긁기불량률%"), "권지불량률%": b.get("권지불량률%"), "예상QC": p,
+                     "수출후보": (grade(float(b["QC"])) + "(실측)") if started and pd.notna(b.get("QC")) else grade(p),
+                     "실제QC": b.get("QC") if started else np.nan, "메모": memo_of(b), "bid": b["bid"]})
+    # ③ 발이실에 있는 방(균긁기만 끝남) — 생육실은 1→12 순서로 돌아가므로 다음 차례를 '예상'으로 적는다
+    P = _paengi_scrapes()
+    if not P.empty:
+        used = set(zip(K["입상일"], K["발이실"]))
+        last_in = K["입상일"].max()
+        nxt = int(K.sort_values("권지일")["생육실"].iloc[-1])
+        W = P[(P["긁기일"] > last_in) & (P["긁기일"] >= today - pd.Timedelta(days=look_back + 5)) & (P["긁기일"] <= today) & (P["배양출고"] > 0)].sort_values("긁기일")
+        for _, r in W.iterrows():
+            if (r["긁기일"], r["방"]) in used:
+                continue
+            nxt = nxt % 12 + 1
+            rate = 100 * r["긁기불량"] / r["배양출고"] if r["배양출고"] else np.nan
+            x1 = float(np.log1p(rate)) if pd.notna(rate) else med1
+            p = float(pred(b1, x1))
+            est = r["긁기일"] + pd.Timedelta(days=days)
+            rows.append({"단계": "발이실", "생육실": f"생육실{nxt:02d}(예상)", "발이실": f"{int(r['방'])}" if pd.notna(r["방"]) else "—", "균긁기일": r["긁기일"], "권지일": pd.NaT,
+                         "예상수확": est, "남은일": int((est - today).days), "긁기불량률%": rate, "권지불량률%": np.nan, "예상QC": p,
+                         "수출후보": grade(p) + "(잠정)", "실제QC": np.nan,
+                         "메모": str(r.get("긁기메모")) if r.get("긁기메모") is not None and str(r.get("긁기메모")) not in ("nan", "None") else "", "bid": ""})
+    D = pd.DataFrame(rows, columns=[c for c in cols if c != "예상판정"])
+    if not D.empty:
+        D["예상판정"] = D["예상QC"].map(band)
+        D = D.sort_values(["예상수확", "균긁기일"]).reset_index(drop=True)[cols]
+    else:
+        D = pd.DataFrame(columns=cols)
+    info["수확일수"] = days
+    return D, info
 
 
 def paengi_batch_env(K=None, env=None):
