@@ -102,6 +102,7 @@ PRODUCTS = {
     'stick':    {'name': '고구마스틱', 'unit': '', 'kind': '고구마 반가공'},
     'cube':     {'name': '허니맛탕큐브', 'unit': '', 'kind': '고구마 반가공'},
     'costino':  {'name': '코티노스 올리브유 감자칩', 'unit': '봉', 'kind': '감자칩'},   # 2026-10 새 제품(올리브유 감자칩 위탁생산). 처음 '코스티노'로 적었다가 '코티노스'로 정정(2026-11-03, 정미씨)
+    'hika':     {'name': '히카칩', 'unit': '봉', 'kind': '히카마칩'},   # 2026-10-29 부터 가공일지 생김(히카마 원물 → 전처리 → 유탕)
 }
 
 # 원본 문서(업무보고서·작업지시서·결재요청서 등)에 잘못 적힌 이름을 화면에서 바로잡는다 — 원본 파일은 손대지 않음.
@@ -125,6 +126,7 @@ def product_of_title(title):
     t = norm(title)
     if '코티노스' in t or '코스티노' in t or '올리브유감자칩' in t: return 'costino'
     if '크런틴' in t: return 'crunteen'
+    if '히카' in t: return 'hika'
     if '호미칩' in t: return 'homi'
     if '달콤바삭' in t: return 'dalkom'
     if '생고구맛탕칩' in t: return 'mattang'
@@ -204,7 +206,7 @@ def classify(path):
         return ('oilIn', None)
     if '사용' in h and any(k in h for k in ('현미유', '팜올레인', '올리브', '식용유', '대두유')):
         return ('oilUse', None)
-    if '입고' in h and any(k in h for k in ('고구마', '감자', '원물')):
+    if '입고' in h and any(k in h for k in ('고구마', '감자', '원물', '히카마')):
         return ('rawIn', None)
     if '반제품' in h:
         return ('semi', None)
@@ -378,7 +380,7 @@ def build_production(products, today):
     out = []
     daily = []
     raw_stock = {}
-    for key in ['crunteen', 'costino', 'homi', 'dalkom', 'mattang', 'stick', 'cube']:
+    for key in ['crunteen', 'costino', 'hika', 'homi', 'dalkom', 'mattang', 'stick', 'cube']:
         if key not in products:
             continue
         pr = products[key]
@@ -516,6 +518,7 @@ def product_of_item(name):
     if '달콤바삭' in t: return 'dalkom'
     if '맛탕칩' in t or '생고구맛탕' in t: return 'mattang'
     if '크런틴' in t: return 'crunteen'
+    if '히카' in t: return 'hika'
     if '스윗' in t or '순고칩' in t: return 'sweet'
     if any(k in t for k in ('운임', '운송', '배송', '택배', '파레트', '파렛트', '가구', '박스', '팔레트', '콘티')): return 'etc'
     return 'other'
