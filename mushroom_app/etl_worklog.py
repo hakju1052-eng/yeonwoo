@@ -8,6 +8,8 @@
   3) 엑셀 주간 업무일지(권석현 업무일지.xlsx) — 'X요일 M/D' 칸 아래 줄이 그날 업무, F열이 처리내용. 연도는 요일로 맞춘다.
   4) 반가공 부장 일일업무보고서(엑셀, 하루 한 파일) — Z:\\반가공\\일일업무보고서(김병준)\\2611\\261113_일일업무보고서.xlsx.
      copy_banagong.bat 이 Downloads\\반가공자료\\일일업무보고서(이름) 으로 복사한 것을 함께 읽는다(extra_dirs). 읽는 법은 etl_banagong._kbj_sheet 와 같다.
+  5) 반가공 일일 업무보고서(정미 씨, 한글 ~2026-10-06 · 엑셀 2026-10-07~) — 원본을 다시 읽지 않고 반가공 현황판이 읽어 둔
+     app_cache\\banagong\\reports__all.json 을 가져다 쓴다(banagong_recs). etl_cli 가 반가공 → 업무일지 순으로 돌아 같은 갱신에서 바로 반영.
 날짜 없는 문서(시험결과 보고서 등)는 '문서'로 따로 모아 제목·앞부분만 둔다.
 
 개인정보: 전화번호·계좌번호처럼 보이는 숫자, 차량번호, 주민번호는 가리고, 출근·퇴근 시각 줄과
@@ -341,6 +343,35 @@ def extra_dirs():
     return out
 
 
+BANAGONG_FILE = "반가공/일일 업무보고서 (반가공 현황판이 읽은 것)"
+
+
+def banagong_recs():
+    """반가공 현황판 캐시의 일일 업무보고서 → (기록 목록, 캐시 파일 수정시각). 부장 보고서처럼 폴더에서 따로 읽는 것('file' 있음)은 뺀다."""
+    p = os.path.join(getattr(C, "BANAGONG_CACHE", ""), "reports__all.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            reps = json.load(f).get("reports") or []
+        mt = int(os.path.getmtime(p))
+    except Exception:
+        return [], 0
+    out = []
+    for r in reps:
+        if r.get("file") or not r.get("d"):
+            continue
+        lines = []
+        for l in r.get("lines") or []:
+            t = clean_text(str(l.get("t") or "").strip())
+            if not t or _DROP.search(t):
+                continue
+            lines.append({"t": t, "sub": bool(l.get("sub")), "tags": tag_line(t)})
+        if sum(len(l["t"]) for l in lines) < 4:
+            continue
+        out.append({"d": r["d"], "who": re.sub(r"\s+", "", r.get("by") or "") or "반가공", "role": "", "title": "반가공 일일 업무보고서",
+                    "lines": lines, "note": [], "file": BANAGONG_FILE})
+    return out, mt
+
+
 def _person(rel):
     parts = rel.replace("\\", "/").split("/")
     return parts[0] if len(parts) > 1 else ""
@@ -459,6 +490,13 @@ def build(cache):
             docs.append({**res["doc"], "file": rel, "mtime": res["mtime"]})
         files.append({"file": rel, "who": _person(rel), "n": len(res.get("recs", [])), "used": used,
                       "mtime": res["mtime"], "err": res.get("err", ""), "doc": bool(res.get("doc"))})
+    b_recs, b_mt = banagong_recs()                       # 반가공 일일 업무보고서(현황판 캐시) — 같은 사람·같은 날이 이미 있으면 넣지 않음
+    have = {(r["who"], r["d"]) for r in recs}
+    b_recs = [r for r in b_recs if r["d"] <= today and (r["who"], r["d"]) not in have]
+    if b_recs:
+        recs += b_recs
+        files.append({"file": BANAGONG_FILE, "who": "·".join(sorted({r["who"] for r in b_recs})), "n": len(b_recs), "used": len(b_recs),
+                      "mtime": b_mt, "err": "", "doc": False})
     # 매일 똑같이 적는 줄(양식 문구: '접종 불량 점검 수,토 …')은 rep 표시 → 화면에서 접어 두고 '이슈'로 세지 않는다
     by_who = {}
     for r in recs:
