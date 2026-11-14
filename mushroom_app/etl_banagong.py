@@ -1340,19 +1340,226 @@ def parse_reports_xlsx(src):
         stamps.append(mtime(path))
     return {'reports': reports, 'file': max(stamps)}
 
+# ───────────────────────── 7-2b. 부장 일일업무보고서 (2026-11-13~) ─────────────────────────
+# 업무자료 옆 '일일업무보고서(김병준)\2611\261113_일일업무보고서.xlsx' — 파일 하나 = 하루, 시트 = '(생산·공장)' · '(일반·사무)' · 누적실적 대시보드.
+# 시트마다 '1. 금일 생산 및 공정 작업 실적' 같은 번호 제목 아래 표(머리 줄 + 자료 줄)나 글머리 줄이 온다 → 제목 = 굵은 줄, 그 아래 = 들여쓴 줄.
+# 제목 두 개가 한 줄에 나란히 있으면(4. 익일 계획 | 5. 금일 이슈) 열을 따라 따로 읽는다. 누적 대시보드 시트는 같은 숫자의 되풀이라 읽지 않음.
+_KBJ_TITLE = re.compile(r'^\s*(\d+)\s*[.)]\s*(\S.*)$')
+_KBJ_EMPTY = re.compile(r'^(?:\[[^\]]*\]\s*)?(?:[^:：]{0,8}[:：]\s*)?(?:특이\s*사항\s*)?(?:없음|해당\s*없음)\s*[.。]?$')
+
+def _n0(v):
+    """표시용 숫자: 360.0 → '360', 0.9 → '0.9', 글자는 그대로."""
+    if v is None:
+        return ''
+    if isinstance(v, bool):
+        return ''
+    if isinstance(v, (int, float)):
+        return f'{v:,.0f}' if abs(v - round(v)) < 1e-9 else f'{v:,.2f}'.rstrip('0').rstrip('.')
+    return _cell_text(v)
+
+def _pct(v):
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return f'{v * 100:.0f}%' if v <= 1.5 else f'{v:.0f}%'
+    return _cell_text(v)
+
+def _kbj_row(heads, vals):
+    """표 한 줄 → 글 한 줄. heads = 머리글(공백 뺀 것) 목록, vals = 같은 순서의 값."""
+    H = lambda *keys: next((vals[i] for i, h_ in enumerate(heads) if h_ and any(k in h_ for k in keys)), None)
+    txt = lambda v: _cell_text(v) if not isinstance(v, (int, float)) else _n0(v)
+    isnum = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    first, second = txt(vals[0]), txt(vals[1]) if len(vals) > 1 else ''
+    if re.match(r'^합\s*계', re.sub(r'\s+', '', first)):
+        return None                                           # kg·봉을 섞어 더한 합계 줄은 쓰지 않음
+    if any('금일실적' in h_ for h_ in heads):                 # 생산·공정 실적
+        goal, done, unit = H('금일목표'), H('금일실적'), txt(H('단위'))
+        if not second and not (isnum(done) and done):
+            return None                                       # '기타공정 | 0 | 대기' 같은 빈 줄
+        t = ' · '.join(x for x in (first, second) if x) + ':'
+        if isnum(done):
+            t += f' 실적 {_n0(done)}{unit}'
+            if isnum(goal) and goal:
+                t += f' / 목표 {_n0(goal)}{unit} ({done / goal * 100:.0f}%)'
+        loss = H('불량', '로스')
+        if isnum(loss) and loss:
+            t += f' · 불량·로스 {_n0(loss)}'
+        if txt(H('진행상태')):
+            t += ' · ' + txt(H('진행상태'))
+        if txt(H('비고')):
+            t += ' — ' + txt(H('비고'))
+        return t
+    if any('현재고' in h_ for h_ in heads):                   # 원·부재료 재고
+        unit = txt(H('단위'))
+        t = ' '.join(x for x in (first, second) if x) + f': 현재고 {_n0(H("현재고"))}{" " + unit if unit else ""}'
+        ex = []
+        if isnum(H('금일입고')) and H('금일입고'): ex.append(f'입고 {_n0(H("금일입고"))}')
+        if isnum(H('금일사용')) and H('금일사용'): ex.append(f'사용 {_n0(H("금일사용"))}')
+        if isnum(H('안전재고')): ex.append(f'안전재고 {_n0(H("안전재고"))}')
+        if ex:
+            t += ' (' + ' · '.join(ex) + ')'
+        note = txt(H('비고'))
+        if note and note != '정상':
+            t += ' — ' + note
+        return t
+    body = txt(H('세부', '내용'))
+    if not body:
+        return None
+    t = ' · '.join(x for x in (first, second) if x) + ': ' + body
+    st_ = [txt(H('점검결과')), txt(H('상태'))]
+    prog = H('진척률')
+    if isnum(prog) and txt(H('상태')) != '완료':
+        st_.append(_pct(prog))
+    when = txt(H('목표일정'))
+    if when:
+        st_.append(when)
+    st_ = [x for x in st_ if x and x != '-']
+    if st_:
+        t += ' (' + ' '.join(st_) + ')'
+    note = txt(H('비고'))
+    if note and not any(i for i, h_ in enumerate(heads) if '담당' in h_ and '비고' in h_):   # '담당/비고' 칸은 담당 이름뿐이라 뺌
+        t += ' — ' + note
+    return t
+
+def _kbj_sheet(sh):
+    """(날짜, 작성자, lines) — lines 는 [{'t', 'sub'?}]"""
+    d = by = None
+    ncol = min(sh.max_col, 12)
+    for r in range(1, min(sh.max_row, 8) + 1):
+        for c in range(1, ncol + 1):
+            k = norm(sh.raw(r, c))
+            if not k:
+                continue
+            if d is None and k in ('보고일자', '작성일자', '일자'):
+                v = sh.raw(r, c + 1)
+                d = parse_date_cell(v)
+                m = re.search(r'(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})', str(v or ''))
+                if d is None and m:
+                    try:
+                        d = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                    except ValueError:
+                        pass
+            if by is None and k in ('작성자', '성명', '담당자'):
+                by = norm(sh.raw(r, c + 1)) or None
+    lines = []
+    sections = {}                                             # 시작 열 → {'kind': 'wait'|'table'|'list', 'heads': [...]}
+    for r in range(1, sh.max_row + 1):
+        vals = [sh.raw(r, c) for c in range(1, ncol + 1)]
+        cells = [(c, _cell_text(v)) for c, v in enumerate(vals, start=1) if v is not None and _cell_text(v)]
+        if not cells:
+            for sec in sections.values():
+                if sec['kind'] != 'wait':
+                    sec['kind'] = 'done'
+            continue
+        titles = [(c, _KBJ_TITLE.match(t)) for c, t in cells]
+        titles = [(c, m) for c, m in titles if m and len(m.group(2)) >= 4 and not re.match(r'^\d+\)', cells[0][1].strip())]
+        if titles and len(titles) == len(cells):               # 제목 줄 (한 줄에 둘 이상일 수도)
+            sections = {}
+            for c, m in titles:
+                name = re.sub(r'\s*\(특이사항\)\s*$', '', m.group(2)).strip()
+                sections[c] = {'kind': 'wait', 'heads': None, 'name': name, 'at': len(lines)}
+                lines.append({'t': name, 'head': True})
+            continue
+        if not sections:
+            continue
+        starts = sorted(sections)
+        if len(starts) > 1:                                     # 나란한 글머리 구역
+            for i, c0 in enumerate(starts):
+                c1 = starts[i + 1] if i + 1 < len(starts) else ncol + 1
+                t = ' '.join(t for c, t in cells if c0 <= c < c1)
+                t = re.sub(r'^\s*(?:\d+\)|[•·▣■□\-–*])\s*', '', t).strip()
+                if t and not _KBJ_EMPTY.match(t):
+                    lines.insert(_kbj_at(lines, sections[c0]), {'t': t, 'sub': True, 'sec': c0})
+            continue
+        sec = sections[starts[0]]
+        if sec['kind'] == 'done':
+            continue
+        if sec['kind'] == 'wait':
+            if len(cells) >= 3:
+                sec['kind'], sec['heads'] = 'table', [norm(v) for v in vals]
+                continue
+            sec['kind'] = 'list'
+        if sec['kind'] == 'table':
+            t = _kbj_row(sec['heads'], vals)
+        else:
+            t = re.sub(r'^\s*(?:\d+\)|[•·▣■□\-–*])\s*', '', ' '.join(t for c, t in cells)).strip()
+        if t and not _KBJ_EMPTY.match(t):
+            lines.append({'t': t, 'sub': True})
+    # 아래 줄이 하나도 없는 제목은 뺀다
+    out = []
+    for i, ln in enumerate(lines):
+        if ln.get('head') and not (i + 1 < len(lines) and lines[i + 1].get('sub')):
+            continue
+        out.append({'t': ln['t'], **({'sub': True} if ln.get('sub') else {})})
+    return d, by, out
+
+def _kbj_at(lines, sec):
+    """나란한 구역에서 이 구역의 다음 줄이 들어갈 자리 (제목 바로 아래 묶음의 끝)."""
+    i = next(k for k, ln in enumerate(lines) if ln.get('head') and ln['t'] == sec['name']) + 1
+    while i < len(lines) and lines[i].get('sub'):
+        i += 1
+    return i
+
+def parse_reports_extra(src):
+    """'일일업무보고서(이름)' 폴더들 — 사람마다 폴더 하나, 날마다 파일 하나."""
+    reports, stamps = [], []
+    for folder in sorted(glob.glob(os.path.join(src, '일일업무보고서*'))):
+        if not os.path.isdir(folder):
+            continue
+        m = re.search(r'[(（]\s*([^)）]+?)\s*[)）]', os.path.basename(folder))
+        who = m.group(1) if m else None
+        files = [f for f in glob.glob(os.path.join(folder, '**', '*.xls*'), recursive=True)
+                 if not os.path.basename(f).startswith('~$') and '._DAV' not in f.replace('\\', '/').split('/')]
+        for path in sorted(files, key=os.path.getmtime):
+            try:
+                wb = load(path)
+            except Exception:
+                continue
+            d = by = None
+            lines = []
+            for ws in wb.worksheets:
+                if '대시보드' in ws.title or '누적' in ws.title:
+                    continue
+                d1, by1, ls = _kbj_sheet(Sheet(ws))
+                d, by = d or d1, by or by1
+                lines += ls
+            if d is None:
+                m = re.match(r'(\d{2})(\d{2})(\d{2})', os.path.basename(path))
+                if m:
+                    try:
+                        d = dt.date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                    except ValueError:
+                        pass
+            if d is None or not lines:
+                continue
+            for ln in lines:
+                tg = tag_line(ln['t']) if ln.get('sub') else []
+                if '설비' in tg and not re.search(r'수리|고장|교체|누수|이탈|A/?S|점검|부품|정비', ln['t'], re.I):
+                    tg.remove('설비')                           # '진공유탕 1라인 실적 …' 같은 생산 줄이 설비 이슈로 뜨지 않게
+                if tg:
+                    ln['tags'] = tg
+            reports.append({'d': ymd(d), 'by': by or who, 'lines': lines, 'file': os.path.basename(path)})
+            stamps.append(mtime(path))
+    if not reports:
+        return None
+    return {'reports': reports, 'file': max(stamps)}
+
 # ───────────────────────── 7-3. 일간 작업지시서 (2026-10~) ─────────────────────────
 # ① 근무조 편성 및 작업지시서\*작업지시서*.xlsx — 시트 하나 = 하루 (10/6 처음 양식)
 # ② 2026-10-19~ 업무자료\작업지시서YYMM\'10월19일.xlsx' — 파일 하나 = 하루 (폴더 이름에 '작업지시서'가 들면 모두)
 # 날짜 줄 '2026년 10월 19일 (월) | 근무 08:00~17:00', 표 머리 '시간 | 구분 | 작업 내용 | 담당자'
 #  (10/14 처럼 '번호 | 구역 / 시간 | 작업 구분 | 세부 작업지시 내용 | 담당자' 나 두 번째 표 '시간 | 작업 내용 | 담당' 도 읽음),
 #  아래 '-특이사항 및 전달사항-' 칸 또는 '비고 | …' / '비고 / 필수 준수사항' 아래 ①② 줄 = 전달사항.
+# 2026-11-11~ 양식이 날마다 조금씩 다름(시간 열 없음, '주의사항' 열, 맨 위 '출근인원 | 9명' 이름표 칸, 아래 '특별 지시사항'·'공통 지시') — _order_heads 참고.
 # 파일을 날마다 덮어써도 지난 날짜가 남도록 이전 결과(reports__all.json 의 orders)와 합친다.
-_BULLETS = ('*', '※', '•', '·', '▣', '①', '②', '③', '④', '⑤')
-_NOTE_HEAD = re.compile(r'^\s*-?\s*(특이\s*사항|전달\s*사항|비\s*고)')
+_BULLETS = ('*', '※', '•', '·', '▣', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨')
+_NOTE_HEAD = re.compile(r'^\s*-?\s*(?:금일\s*)?(?:특이\s*사항|전달\s*사항|비\s*고|(?:특별|공통|중점|주요|기타)\s*(?:작업\s*)?(?:지시|사항|주의)|주의\s*사항|필수\s*준수|퇴근\s*조건)')
+_ORDER_INFO = re.compile(r'인원|출근|퇴근|목표|생산\s*품목|근무\s*시간|작업\s*시간')
 
 def _order_heads(sh, r, ncol):
+    """표 머리 줄이면 {'time'|'kind'|'task'|'who'|'memo': 열} — 아니면 None.
+    ~11/10 '시간 | 구분 | 작업 내용 | 담당자', 11/11~ '작업구분 | 담당자 | 작업내용 | 주의사항'(시간 열 없음),
+    11/14 '작업자 | 담당 업무 | 작업 시간 | 세부 지시사항' 처럼 양식이 바뀌어도 읽는다."""
     heads = [norm(sh.raw(r, c)) for c in range(1, ncol + 1)]
-    if not (any('시간' in h_ for h_ in heads) and any('내용' in h_ or '작업' in h_ for h_ in heads)):
+    if sum(1 for h_ in heads if h_) < 3 or any(len(h_) > 16 for h_ in heads):
         return None
     cols = {}
     for i, h_ in enumerate(heads, start=1):
@@ -1360,16 +1567,26 @@ def _order_heads(sh, r, ncol):
             continue
         if 'time' not in cols and '시간' in h_: cols['time'] = i
         elif 'kind' not in cols and '구분' in h_: cols['kind'] = i
-        elif 'task' not in cols and ('내용' in h_ or h_ == '작업'): cols['task'] = i
-        elif 'who' not in cols and ('작업자' in h_ or '담당' in h_): cols['who'] = i
-    return cols if 'task' in cols else None
+        elif 'who' not in cols and ('작업자' in h_ or h_ in ('담당', '담당자') or ('담당' in h_ and '업무' not in h_)): cols['who'] = i
+        elif 'task' not in cols and ('내용' in h_ or '업무' in h_ or h_ == '작업'): cols['task'] = i
+        elif 'memo' not in cols and ('주의' in h_ or '기준' in h_ or '지시' in h_ or '비고' in h_ or '참고' in h_): cols['memo'] = i
+    if 'task' not in cols or not ({'time', 'kind', 'who'} & set(cols)):
+        return None
+    return cols
 
 def _order_sheet(sh):
     d = hours = None
     hr = None
     cols = {}
+    info = []
     ncol = min(sh.max_col, 8)
     for r in range(1, min(sh.max_row, 10) + 1):
+        if hr is None:
+            cc = _order_heads(sh, r, ncol)
+            if cc:
+                hr, cols = r, cc
+        if hr is not None:
+            break
         for c in range(1, ncol + 1):
             t = sh.raw(r, c)
             if t is None:
@@ -1387,28 +1604,36 @@ def _order_sheet(sh):
                 elif '|' in t:                                # '… (토) | 퇴근: 감자 전처리 작업 완료 후'
                     rest = ' · '.join(x.strip() for x in t.split('|')[1:] if x.strip())
                     hours = rest or None
-        if hr is None:
-            cc = _order_heads(sh, r, ncol)
-            if cc:
-                hr, cols = r, cc
+            elif c < ncol and _ORDER_INFO.search(t) and len(norm(t)) <= 10:   # '출근인원 | 9명', '퇴근기준 | …' (이름표 옆 칸이 값)
+                v = _cell_text(sh.raw(r, c + 1))
+                mh = re.fullmatch(r'(\d{1,2}:\d{2})\s*~\s*(\d{1,2}:\d{2})', v)
+                if mh and re.search(r'근무\s*시간', t) and not hours:
+                    hours = mh.group(1) + ' ~ ' + mh.group(2)
+                elif v:
+                    info.append(_cell_text(t) + ' ' + v)
     if d is None or hr is None:
         return None
-
     def add_note(t, sub=False):
         t = re.sub(r'^\s*[*※•·▣\-]\s*', '', t).strip()
         if t:
             notes.append({'t': t, 'sub': sub})
 
+    def filled_of(r):
+        return [str(v).strip() for v in (sh.raw(r, c) for c in range(1, ncol + 1)) if v is not None and str(v).strip()]
+
     rows, notes = [], []
     in_notes = False
+    sub_labels = None                                         # 덧붙은 작은 표(예: 11/14 당침 조건표) — None | 'wait' | [이름표…]
     for r in range(hr + 1, sh.max_row + 1):
         vals = [sh.raw(r, c) for c in range(1, ncol + 1)]
         filled = [str(v).strip() for v in vals if v is not None and str(v).strip()]
         if not filled:
+            sub_labels = None
             continue
         ft = filled[0]
         if len(filled) == 1 and (_NOTE_HEAD.match(ft) or ft.lstrip().startswith(_BULLETS)):
             in_notes = True
+            sub_labels = None
             lines = ft.split('\n')
             head = lines[0]
             mh = re.match(r'^\s*-?\s*(?:특이\s*사항|전달\s*사항|비\s*고)[^|:：]*[|:：]\s*(.+)$', head)
@@ -1427,19 +1652,35 @@ def _order_sheet(sh):
             if len(filled) == 1:
                 add_note(ft)
             continue
+        if sub_labels is not None and len(filled) >= 2:      # 작은 표: 첫 줄 = 이름표, 다음 줄부터 '이름표 값 · …'
+            if sub_labels == 'wait':
+                sub_labels = [_cell_text(v) for v in vals]
+            else:
+                add_note(' · '.join((lab + ' ' if lab else '') + _cell_text(v) for lab, v in zip(sub_labels, vals) if _cell_text(v)), True)
+            continue
         cc = _order_heads(sh, r, ncol)                        # 두 번째 표 (예: '시간별 진행 계획')
         if cc:
             cols = cc
             continue
         if ft.startswith('※'):
             continue
+        if len(filled) == 1 and rows and r < sh.max_row and len(filled_of(r + 1)) >= 2 and not _order_heads(sh, r + 1, ncol) \
+                and not filled_of(r - 1):                     # 빈 줄 뒤 제목 한 칸 + 바로 아래 다른 표 → 전달사항으로
+            add_note(ft)
+            sub_labels = 'wait'
+            continue
         g = lambda k: _cell_text(sh.raw(r, cols[k])) if k in cols else ''
         row = {'time': g('time'), 'kind': g('kind'), 'task': g('task'), 'who': g('who')}
+        if g('memo'):
+            row['memo'] = g('memo')
         if row['task'] or row['kind']:
             rows.append(row)
     if not rows and not notes:
         return None
-    return {'d': ymd(d), 'hours': hours, 'rows': rows, 'notes': notes}
+    o = {'d': ymd(d), 'hours': hours, 'rows': rows, 'notes': notes}
+    if info:
+        o['info'] = info                                      # 맨 위 이름표 칸: '출근인원 9명', '퇴근기준 …', '생산목표 …'
+    return o
 
 def _order_files(src):
     out = []
@@ -1477,15 +1718,21 @@ def parse_orders(src, outdir=None):
         return None
     return {'orders': [by_d[k] for k in sorted(by_d)], 'file': max(stamps) if stamps else None}
 
-def merge_reports(hwp, xl):
-    """한글(~2026-10-06)과 엑셀(2026-10-07~) 업무보고서를 날짜순으로 합친다. 같은 날이 둘 다 있으면 엑셀 것을 쓴다."""
-    if not hwp and not xl:
+def merge_reports(hwp, xl, extra=None):
+    """한글(~2026-10-06)과 엑셀(2026-10-07~) 업무보고서를 날짜순으로 합친다. 같은 날이 둘 다 있으면 엑셀 것을 쓴다.
+    extra = 다른 사람의 보고서('일일업무보고서(김병준)' 폴더) — 같은 날이어도 따로 한 건으로 둔다(날짜, 작성자 순)."""
+    if not hwp and not xl and not extra:
         return None
     by_d = {r['d']: r for r in (hwp or {}).get('reports', [])}
     for r in (xl or {}).get('reports', []):
         by_d[r['d']] = r
-    files = [f for f in ((hwp or {}).get('file'), (xl or {}).get('file')) if f]
-    return {'reports': [by_d[k] for k in sorted(by_d)], 'file': max(files) if files else None}
+    ex = {}
+    for r in (extra or {}).get('reports', []):                 # 같은 사람·같은 날 파일이 둘이면 나중에 고친 것
+        ex[(r['d'], r.get('by') or '')] = r
+    allr = [(d, 0, '', r) for d, r in by_d.items()] + [(d, 1, by, r) for (d, by), r in ex.items()]
+    allr.sort(key=lambda x: x[:3])
+    files = [f for f in ((hwp or {}).get('file'), (xl or {}).get('file'), (extra or {}).get('file')) if f]
+    return {'reports': [x[3] for x in allr], 'file': max(files) if files else None}
 
 
 # ───────────────────────── 실행 ─────────────────────────
@@ -1522,8 +1769,9 @@ def build(src, outdir, today=None, progress=print):
     ledgers = safe('수불부', parse_ledgers, src, default={}) or {}
     labor = safe('근무일지', parse_labor, src, default={'months': {}, 'overtime': {}}) or {'months': {}, 'overtime': {}}
     boiler = safe('보일러 가동일지', parse_boiler, src, default={}) or {}
+    extra_reports = safe('부장 일일업무보고서', parse_reports_extra, src)
     reports = merge_reports(safe('일일 업무보고서(한글)', parse_reports, src),
-                            safe('일일 업무보고서(엑셀)', parse_reports_xlsx, src))
+                            safe('일일 업무보고서(엑셀)', parse_reports_xlsx, src), extra_reports)
     orders = safe('일간 작업지시서', parse_orders, src, outdir)
 
     def latest(dates):
@@ -1552,6 +1800,10 @@ def build(src, outdir, today=None, progress=print):
                         'note': ', '.join(f"{int(k[5:])}월 기록 없음" for k, v in sorted(boiler.items()) if not v['last'])})
     if reports:
         sources.append({'key': 'reports', 'label': '일일 업무보고서', 'area': '업무', 'latest': latest([r['d'] for r in reports['reports']]), 'file': reports['file']})
+    if extra_reports:
+        whos = sorted({r.get('by') or '' for r in extra_reports['reports']} - {''})
+        sources.append({'key': 'reports_extra', 'label': '부장 일일업무보고서', 'area': '업무', 'latest': latest([r['d'] for r in extra_reports['reports']]),
+                        'file': extra_reports['file'], 'note': ', '.join(whos)})
     if orders:
         sources.append({'key': 'orders', 'label': '일간 작업지시서', 'area': '업무', 'latest': latest([o['d'] for o in orders['orders']]), 'file': orders['file']})
 

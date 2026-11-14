@@ -94,7 +94,7 @@ def render(ver=None):
     st.markdown(CSS, unsafe_allow_html=True)
     people = sorted({r["who"] for r in recs})
     today = dt.date.today()
-    st.caption(f"Z:\\업무일지 의 담당자별 업무보고서(워드·한글·엑셀) {len(D.get('files', []))}개 파일 → {len(recs):,}일치 · 마지막 읽음 {D.get('updated', '')} · "
+    st.caption(f"Z:\\업무일지 의 담당자별 업무보고서(워드·한글·엑셀)와 반가공 부장 일일업무보고서 {len(D.get('files', []))}개 파일 → {len(recs):,}일치 · 마지막 읽음 {D.get('updated', '')} · "
                "줄마다 내용을 보고 분류를 자동으로 붙였습니다(가끔 틀릴 수 있음). 전화·계좌·차량번호는 가리고 출퇴근 시각 줄은 뺐습니다.")
 
     c1, c2, c3, c4 = st.columns([1.1, 1.8, 1.1, 1.6])

@@ -238,7 +238,7 @@ const LOG_TAGS = ["전체","설비","입고","출고","생산","인력","위생"
 const STALE_DAYS = 21;
 
 const S = { db:null, conn:"wait", D:null, tab:"home", month:null, today:null, admin:true,
-  logQ:"", logTag:"전체", logMonth:"전체", logLimit:20, ordD:null, logView:"rep", tables:{}, tips:{}, tipSeq:0 };
+  logQ:"", logTag:"전체", logMonth:"전체", logBy:"전체", logLimit:20, ordD:null, logView:"rep", tables:{}, tips:{}, tipSeq:0 };
 
 /* ───────── 유틸 ───────── */
 const $ = (s, r=document) => r.querySelector(s);
@@ -746,29 +746,38 @@ function vLogReports(){
   const q = S.logQ.trim();
   let list = all;
   if (S.logMonth !== "전체") list = list.filter(r => r.d.slice(0,7) === S.logMonth);
+  const authors = [...new Set(all.map(r => r.by).filter(Boolean))];
+  if (S.logBy !== "전체" && !authors.includes(S.logBy)) S.logBy = "전체";
+  if (S.logBy !== "전체") list = list.filter(r => r.by === S.logBy);
   const shown = (S.logTag === "전체" && !q) ? list : list.map(r => {
     const lines = r.lines.filter(l => (S.logTag === "전체" || (l.tags || []).includes(S.logTag)) && (!q || l.t.toLowerCase().includes(q.toLowerCase())));
     return lines.length ? { ...r, lines } : null; }).filter(Boolean);
-  let h = logMenu() + `<div class="head"><div><h2>업무일지</h2><p>일일 업무보고서(한글·엑셀 파일)를 날짜별로 정리했습니다. 줄마다 내용을 보고 입고·출고·설비 같은 분류를 자동으로 붙였습니다.</p></div></div>`;
+  let h = logMenu() + `<div class="head"><div><h2>업무일지</h2><p>일일 업무보고서(한글·엑셀 파일)와 부장 일일업무보고서(일일업무보고서(이름) 폴더, 하루 한 파일)를 날짜별로 정리했습니다. 줄마다 내용을 보고 입고·출고·설비 같은 분류를 자동으로 붙였습니다.</p></div></div>`;
   h += `<div class="logf"><input type="search" id="logQ" placeholder="검색 (예: 감자, 수리, 세스코)" value="${esc(S.logQ)}" aria-label="업무일지 검색">` +
-    `<select id="logMonth" aria-label="기간"><option value="전체">전체 기간</option>${months.map(mm => `<option value="${mm}" ${mm === S.logMonth ? "selected" : ""}>${esc(mLong(mm))}</option>`).join("")}</select></div>`;
+    `<select id="logMonth" aria-label="기간"><option value="전체">전체 기간</option>${months.map(mm => `<option value="${mm}" ${mm === S.logMonth ? "selected" : ""}>${esc(mLong(mm))}</option>`).join("")}</select>` +
+    (authors.length > 1 ? `<select id="logBy" aria-label="작성자"><option value="전체">전체 작성자</option>${authors.map(a => `<option value="${esc(a)}" ${a === S.logBy ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>` : "") + `</div>`;
   h += `<div class="logf" role="group" aria-label="분류">${LOG_TAGS.map(t => `<button class="chip" data-tag="${t}" aria-pressed="${S.logTag === t}">${esc(t)}</button>`).join("")}</div>`;
-  h += `<div class="panel"><h3>${shown.length}일치 <small>${(S.D.reports || {}).file ? "파일 수정 " + esc(S.D.reports.file) : ""}</small></h3>`;
+  h += `<div class="panel"><h3>${shown.length}건 <small>${(S.D.reports || {}).file ? "파일 수정 " + esc(S.D.reports.file) : ""}</small></h3>`;
   h += shown.length ? shown.slice(0, S.logLimit).map(r => `<div class="rep"><div class="rd">${esc(dLabel(r.d))}<small>${esc(r.d.slice(0,4))}년${r.by ? " · " + esc(r.by) : ""}</small></div><ul>${r.lines.map(l => `<li class="${l.sub ? "sub" : ""}">${hl(l.t, q)}${tagPills(l.tags)}</li>`).join("")}</ul></div>`).join("") : `<p class="empty">조건에 맞는 기록이 없습니다.</p>`;
-  if (shown.length > S.logLimit) h += `<p style="margin:12px 0 0"><button class="btn" data-act="more">이전 기록 더 보기 (${shown.length - S.logLimit}일 남음)</button></p>`;
+  if (shown.length > S.logLimit) h += `<p style="margin:12px 0 0"><button class="btn" data-act="more">이전 기록 더 보기 (${shown.length - S.logLimit}건 남음)</button></p>`;
   h += `</div>`;
   return h;
 }
 
 function vLogOrders(){                    // 일간 작업지시서 (근무조 편성 및 작업지시서\\*작업지시서*.xlsx, 작업지시서YYMM\\하루 한 파일)
   const ords = orders();
-  let h = logMenu() + `<div class="head"><div><h2>작업지시서</h2><p>업무자료의 작업지시서 폴더(작업지시서2610 등, 하루 한 파일)와 근무조 편성 및 작업지시서 폴더의 일간 작업지시서를 날짜별로 보여 줍니다. 파일을 날마다 새로 써도 앱이 읽은 날짜는 남겨 둡니다.</p></div></div>`;
+  let h = logMenu() + `<div class="head"><div><h2>작업지시서</h2><p>업무자료의 작업지시서 폴더(일일작업지시서\\2611 등, 하루 한 파일)와 근무조 편성 및 작업지시서 폴더의 일간 작업지시서를 날짜별로 보여 줍니다. 파일을 날마다 새로 써도 앱이 읽은 날짜는 남겨 둡니다.</p></div></div>`;
   if (!ords.length) return h + `<div class="panel"><p class="empty">작업지시서가 없습니다.</p></div>`;
     const o = ords.find(x => x.d === S.ordD) || ords[ords.length - 1];
     h += `<div class="panel"><h3>일간 작업지시서 <small>${esc(dLabel(o.d))}${o.hours ? (/\d:\d\d/.test(o.hours) ? " · 근무시간 " : " · ") + esc(o.hours) : ""}</small></h3>`;
     if (ords.length > 1) h += `<div class="logf"><select id="ordD" aria-label="작업지시서 날짜">${ords.slice().reverse().map(x => `<option value="${x.d}" ${x.d === o.d ? "selected" : ""}>${esc(dLabel(x.d))}</option>`).join("")}</select></div>`;
-    if (o.rows && o.rows.length) h += `<div class="tw"><table><thead><tr><th>시간</th><th>구분</th><th>작업 내용</th><th>작업자</th></tr></thead><tbody>` +
-      o.rows.map(r => `<tr><td class="nw">${esc(r.time)}</td><td class="nw">${esc(r.kind)}</td><td>${esc(r.task)}</td><td>${esc(r.who)}</td></tr>`).join("") + `</tbody></table></div>`;
+    if (o.info && o.info.length) h += `<p class="muted small" style="margin:0 0 8px">${o.info.map(esc).join(" · ")}</p>`;
+    if (o.rows && o.rows.length){                         // 양식이 날마다 달라 있는 칸만 보여 줌 (11/11~ 시간 칸 없음, '주의사항' 칸 생김)
+      const has = k => o.rows.some(r => r[k]);
+      const cols = [["time","시간",1],["kind","구분",1],["task","작업 내용",0],["who","작업자",0],["memo","기준·주의사항",0]].filter(c => c[0] === "task" || has(c[0]));
+      h += `<div class="tw"><table><thead><tr>${cols.map(c => `<th>${c[1]}</th>`).join("")}</tr></thead><tbody>` +
+        o.rows.map(r => `<tr>${cols.map(c => `<td${c[2] ? ' class="nw"' : ""}>${esc(r[c[0]] || "")}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`;
+    }
     if (o.notes && o.notes.length) h += `<div class="rep" style="grid-template-columns:96px minmax(0,1fr)"><div class="rd">특이사항<small>전달사항</small></div><ul>${o.notes.map(l => `<li class="${l.sub ? "sub" : ""}">${esc(l.t)}</li>`).join("")}</ul></div>`;
     h += `${o.file ? `<p class="muted small" style="margin:6px 0 0">파일 ${esc(o.file)}</p>` : ""}</div>`;
   return h;
@@ -849,7 +858,8 @@ document.addEventListener("input", e => {
   clearTimeout(qTimer); const val = e.target.value;
   qTimer = setTimeout(() => { S.logQ = val; S.logLimit = 20; render(); const el = $("#logQ"); if (el){ el.focus(); el.setSelectionRange(val.length, val.length); } }, 250);
 });
-document.addEventListener("change", e => { if (e.target.id === "logMonth"){ S.logMonth = e.target.value; S.logLimit = 20; render(); }
+document.addEventListener("change", e => { if (e.target.id === "logBy"){ S.logBy = e.target.value; S.logLimit = 20; render(); }
+  if (e.target.id === "logMonth"){ S.logMonth = e.target.value; S.logLimit = 20; render(); }
   if (e.target.id === "ordD"){ S.ordD = e.target.value; render(); } });
 
 /* ───────── 시작 (스트림릿 컴포넌트) ─────────

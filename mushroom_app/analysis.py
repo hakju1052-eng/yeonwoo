@@ -1267,7 +1267,7 @@ def worklog_repairs(R=None):
     for r in sorted(recs, key=lambda x: x.get("d") or ""):
         who = r.get("who") or ""
         d = pd.to_datetime(r.get("d"), errors="coerce")
-        if pd.isna(d) or who in _WL_NOT_WRITER:
+        if pd.isna(d) or who in _WL_NOT_WRITER or "반가공" in (r.get("title") or ""):   # 반가공 공장 보고서는 버섯 설비·배양 기록이 아님
             continue
         parent_t, parent_row = "", None                 # 바로 위 큰 줄(들여쓴 줄이 아닌 줄)과, 그 줄이 수리로 뽑혔으면 그 기록
         for l in r.get("lines") or []:
@@ -1420,7 +1420,7 @@ def worklog_culture_issues(K=None):
     for r in recs:
         d = pd.to_datetime(r.get("d"), errors="coerce")
         who = r.get("who") or ""
-        if pd.isna(d) or who in _WL_NOT_WRITER:
+        if pd.isna(d) or who in _WL_NOT_WRITER or "반가공" in (r.get("title") or ""):   # 반가공 공장 보고서는 버섯 설비·배양 기록이 아님
             continue
         cur = None                                         # 지금 글을 잇고 있는 이슈
         for l in list(r.get("lines") or []) + [x for x in (r.get("note") or []) if isinstance(x, dict)]:

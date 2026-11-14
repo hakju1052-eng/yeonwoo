@@ -6,6 +6,8 @@
      월별 파일(안석구·이장우·김세영·오동준)과 하루 한 파일(남기천: '일 시: 2026년 10월 31일', '기 타:' 칸) 모두 같은 방식으로 읽는다.
   2) 한글(.hwp) 업무보고서 — 글자만 뽑아 '일 시 :' 마다 끊는다 (etl_banagong.hwp_text 를 그대로 씀, olefile 필요).
   3) 엑셀 주간 업무일지(권석현 업무일지.xlsx) — 'X요일 M/D' 칸 아래 줄이 그날 업무, F열이 처리내용. 연도는 요일로 맞춘다.
+  4) 반가공 부장 일일업무보고서(엑셀, 하루 한 파일) — Z:\\반가공\\일일업무보고서(김병준)\\2611\\261113_일일업무보고서.xlsx.
+     copy_banagong.bat 이 Downloads\\반가공자료\\일일업무보고서(이름) 으로 복사한 것을 함께 읽는다(extra_dirs). 읽는 법은 etl_banagong._kbj_sheet 와 같다.
 날짜 없는 문서(시험결과 보고서 등)는 '문서'로 따로 모아 제목·앞부분만 둔다.
 
 개인정보: 전화번호·계좌번호처럼 보이는 숫자, 차량번호, 주민번호는 가리고, 출근·퇴근 시각 줄과
@@ -252,6 +254,39 @@ def _year_for(wd, m, d, hint):
     return best
 
 
+def parse_xlsx_daily(path, who):
+    """반가공 부장 일일업무보고서(하루 한 파일, '보고일자'·'작성일자' 칸이 있는 양식). 다른 양식이면 []."""
+    import openpyxl
+    from . import etl_banagong as B
+    wb = openpyxl.load_workbook(path, data_only=True)
+    if not any("일일업무보고서" in ws.title.replace(" ", "") for ws in wb.worksheets):
+        return []
+    d = by = None
+    role = ""
+    body = []
+    for ws in wb.worksheets:
+        if "대시보드" in ws.title or "누적" in ws.title:
+            continue
+        d1, by1, lines = B._kbj_sheet(B.Sheet(ws))
+        d, by = d or d1, by or by1
+        for r in range(1, min(ws.max_row, 8) + 1):               # '부서 / 직급: 반가공 / 부장'
+            for c in range(1, min(ws.max_column, 12) + 1):
+                m = re.search(r"직급\s*[:：]\s*(.+)$", str(ws.cell(r, c).value or ""))
+                if m and not role:
+                    role = m.group(1).split("/")[-1].strip()
+        body += [("  " if l.get("sub") else "") + l["t"] for l in lines]
+    if d is None:
+        m = re.match(r"(\d{2})(\d{2})(\d{2})", os.path.basename(path))
+        try:
+            d = dt.date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+        except ValueError:
+            d = None
+    if d is None or not body:
+        return []
+    name = who or by or ""
+    return [{"d": d.isoformat(), "title": "반가공 일일업무보고서", "who": (name + " " + role).strip(), "body": "\n".join(body), "note": ""}]
+
+
 def parse_xlsx(path, who):
     import openpyxl
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -295,6 +330,17 @@ def base_dir():
     return os.path.join(C.DATA_DIR, "기타일지", "업무일지")
 
 
+def extra_dirs():
+    """업무일지 폴더 밖에 있는 개인 보고서 폴더 → [(폴더, 담당자)]. 지금은 반가공자료\\일일업무보고서(이름)."""
+    out = []
+    for src in getattr(C, "BANAGONG_SRC", []):
+        for p in sorted(glob.glob(os.path.join(src, "일일업무보고서*"))):
+            m = re.search(r"[(（]\s*([^)）]+?)\s*[)）]", os.path.basename(p))
+            if os.path.isdir(p) and m:
+                out.append((p, m.group(1)))
+    return out
+
+
 def _person(rel):
     parts = rel.replace("\\", "/").split("/")
     return parts[0] if len(parts) > 1 else ""
@@ -311,7 +357,7 @@ def parse_file(path, rel):
         text = hwp_plain(path)
         recs = parse_hwp_text(text)
     elif ext in (".xlsx", ".xlsm"):
-        recs = parse_xlsx(path, person)
+        recs = parse_xlsx_daily(path, person) or parse_xlsx(path, person)
     out = []
     for r in recs:
         if not r.get("d"):
@@ -350,10 +396,13 @@ def run(progress=print, force=False):
     if cache.get("_rules") != RULES or force:
         cache = {"_rules": RULES}
     seen, n_read, errs = set(), 0, []
-    for p in sorted(glob.glob(os.path.join(base, "**", "*"), recursive=True)):
+    todo = [(p, os.path.relpath(p, base).replace("\\", "/")) for p in sorted(glob.glob(os.path.join(base, "**", "*"), recursive=True))]
+    for folder, person in extra_dirs():          # 반가공자료\일일업무보고서(김병준)\2611\… → '김병준/반가공/2611/…'
+        todo += [(p, person + "/반가공/" + os.path.relpath(p, folder).replace("\\", "/"))
+                 for p in sorted(glob.glob(os.path.join(folder, "**", "*"), recursive=True))]
+    for p, rel in todo:
         if not os.path.isfile(p) or os.path.splitext(p)[1].lower() not in EXTS:
             continue
-        rel = os.path.relpath(p, base).replace("\\", "/")
         if "/" not in rel:                       # 맨 위 낱개 파일(빈 양식 '업무보고서.hwp')은 담당자를 몰라 뺀다
             continue
         if "#recycle" in rel or SKIP_NAME.search(os.path.basename(p)) or os.path.getsize(p) == 0:
