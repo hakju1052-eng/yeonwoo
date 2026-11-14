@@ -1735,6 +1735,161 @@ def merge_reports(hwp, xl, extra=None):
     return {'reports': [x[3] for x in allr], 'file': max(files) if files else None}
 
 
+# ───────────────────────── 7-4. 달력형 생산계획 (2026-10~) ─────────────────────────
+# 업무자료 맨 위 '2026년_11월_달력형_생산계획.xlsx' (매달 새 파일) → copy_banagong.bat 이 사본\생산계획\ 으로 복사.
+# 제목 '2026년 11월 생산계획', 요일 머리 줄(월~일) 아래가 달력. 양식이 두 가지:
+#   ㉠ 10월: 한 칸에 '1일 (목)\n코스티노 감자칩\n전처리·냉동'            (날짜와 내용이 같은 칸)
+#   ㉡ 11월: 날짜 숫자만 있는 줄(2 3 4 …) + 그 아래 줄에 내용 '크런틴 오리지널\n5,000봉'
+# 날짜 칸이 아닌 글('총계 - 21,000봉 …', '▣ 히카칩 10,000봉, …')은 요약, 달력 아래 한 줄짜리 글은 비고.
+# 칸 내용은 '이름 줄(들) + 수량 줄(5,000봉)' 묶음으로 나눠 items 로 — 제품 키(p)는 가공일지 제품과 같은 이름 규칙.
+_PLAN_QTY = re.compile(r'^\s*([\d,]{1,9})\s*(봉|kg|Kg|KG|박스|box|BOX|개)\s*(.*)$')
+_PLAN_DAY = re.compile(r'^\s*(\d{1,2})\s*일\s*(?:\(\s*[월화수목금토일]\s*\))?\s*(.*)$', re.S)
+
+def _plan_items(lines):
+    items, names = [], []
+    for ln in lines:
+        m = _PLAN_QTY.match(ln)
+        if m:
+            name = ' · '.join(names)
+            it = {'name': name, 'qty': int(m.group(1).replace(',', '')), 'unit': m.group(2).replace('Kg', 'kg').replace('KG', 'kg')}
+            if m.group(3).strip():
+                it['memo'] = m.group(3).strip()
+            if '주간' in ln or '주)' in ln:
+                it['weekly'] = True                            # '5,000봉 목표(주간)' — 그 주 전체 목표라 하루 계획으로 더하지 않음
+            items.append(it)
+            names = []
+        else:
+            names.append(ln)
+    if names:
+        items.append({'name': ' · '.join(names)})
+    for it in items:
+        pk = product_of_title(it['name']) if it['name'] else None
+        if pk:
+            it['p'] = pk
+        fl = flavor_of_item(it['name']) if it['name'] else None
+        if fl and pk in ('crunteen', 'dalkom'):
+            it['flavor'] = fl
+    return items
+
+def _plan_sheet(sh, fname=''):
+    y = mo = None
+    title = sub = None
+    hr = None
+    ncol = min(sh.max_col, 10)
+    for r in range(1, min(sh.max_row, 8) + 1):
+        vals = [norm(sh.raw(r, c)) for c in range(1, ncol + 1)]
+        if hr is None and sum(1 for v in vals if v in ('월', '화', '수', '목', '금', '토', '일')) >= 5:
+            hr = r
+            break
+        t = _cell_text(sh.raw(r, 1))
+        if not t:
+            continue
+        m = re.search(r'(\d{4})\s*년\s*(\d{1,2})\s*월', t)
+        if y is None and m:
+            y, mo, title = int(m.group(1)), int(m.group(2)), t
+        elif title and sub is None:
+            sub = re.sub(r'^[\s·]+|[\s·]+$', '', t) or None
+    if y is None:
+        m = re.search(r'(\d{4})\s*년[_\s]*(\d{1,2})\s*월', fname)
+        if m:
+            y, mo = int(m.group(1)), int(m.group(2))
+    if y is None or hr is None:
+        return None
+    wd_col = {}                                               # 열 → 요일 번호(월=0)
+    for c in range(1, ncol + 1):
+        v = norm(sh.raw(hr, c))
+        if v in ('월', '화', '수', '목', '금', '토', '일'):
+            wd_col[c] = '월화수목금토일'.index(v)
+
+    def split(v):
+        return [x for x in (re.sub(r'\s+', ' ', t).strip() for t in str(v).replace('\r', '\n').split('\n')) if x]
+
+    def summ(v):                                              # 요약 칸: 짧은 줄 여럿('총계 - 21,000봉 / 예상매출금액 / 20,000,000원')은 한 줄로
+        ls = [re.sub(r'^[▣■※\s]+', '', x) for x in split(v)]
+        ls = [x for x in ls if x]
+        return [' '.join(ls)] if len(ls) > 1 and all(len(x) < 20 for x in ls) else ls
+
+    def good_day(day, c):
+        try:
+            d = dt.date(y, mo, day)
+        except ValueError:
+            return None
+        return d if (c not in wd_col or d.weekday() == wd_col[c]) else None    # 요일이 안 맞으면 앞·뒤 달 날짜
+
+    days, summary, notes = {}, [], []
+    cur = {}                                                  # ㉡ 양식: 열 → 그 열의 현재 날짜
+    for r in range(hr + 1, sh.max_row + 1):
+        raw = [(c, sh.raw(r, c)) for c in range(1, ncol + 1)]
+        raw = [(c, v) for c, v in raw if v is not None and str(v).strip()]
+        if not raw:
+            continue
+        nums = [(c, v) for c, v in raw if (isinstance(v, (int, float)) and not isinstance(v, bool) and float(v).is_integer() and 1 <= v <= 31)
+                or (isinstance(v, str) and re.fullmatch(r'\s*\d{1,2}\s*일?\s*', v))]
+        if nums and (len(nums) >= 2 or len(raw) <= 2):         # ㉡ 날짜 줄
+            cur = {}
+            for c, v in raw:
+                if (c, v) in nums:
+                    d = good_day(int(re.sub(r'\D', '', str(int(v) if not isinstance(v, str) else v))), c)
+                    if d:
+                        cur[c] = ymd(d)
+                        days.setdefault(cur[c], [])
+                else:
+                    summary += summ(v)
+            continue
+        wide = len(raw) == 1 and raw[0][0] == 1 and any(tl == (r, 1) and cc >= 4 for (rr, cc), tl in sh.merged.items() if rr == r)
+        if wide:                                               # 달력 아래 가로로 합친 한 줄 = 비고
+            notes += [re.sub(r'^[▣■※\s]+', '', x) for x in split(raw[0][1])]
+            cur = {}
+            continue
+        for c, v in raw:
+            m = _PLAN_DAY.match(str(v)) if isinstance(v, str) else None
+            if m:                                              # ㉠ 한 칸에 날짜 + 내용
+                d = good_day(int(m.group(1)), c)
+                if d:
+                    days.setdefault(ymd(d), []).extend(split(m.group(2)))
+                continue
+            if c in cur:                                       # ㉡ 날짜 줄 아래 내용
+                days[cur[c]].extend(split(v))
+            else:
+                summary += summ(v)
+    if not days:
+        return None
+    out = []
+    for d in sorted(days):
+        lines = days[d]
+        e = {'d': d, 'lines': lines}
+        if lines and all(re.fullmatch(r'휴\s*무|휴\s*일|쉼', x) for x in lines):
+            e['off'] = True
+        else:
+            its = _plan_items(lines)
+            if its:
+                e['items'] = its
+        out.append(e)
+    return {'ym': f'{y:04d}-{mo:02d}', 'title': title or f'{y}년 {mo}월 생산계획', 'sub': sub, 'days': out,
+            'summary': [x for x in summary if x], 'notes': [x for x in notes if x]}
+
+def parse_plans(src):
+    files = []
+    for pat in (os.path.join(src, '생산계획', '**', '*생산계획*.xls*'), os.path.join(src, '*생산계획*.xls*')):
+        files += glob.glob(pat, recursive=True)
+    files = sorted({f for f in files if not os.path.basename(f).startswith('~$')}, key=os.path.getmtime)
+    by_m, stamps = {}, []
+    for path in files:
+        try:
+            wb = load(path)
+        except Exception:
+            continue
+        for ws in wb.worksheets:
+            pl = _plan_sheet(Sheet(ws), os.path.basename(path))
+            if pl:
+                pl['file'], pl['fileTime'] = os.path.basename(path), mtime(path)
+                by_m[pl['ym']] = pl                             # 같은 달이 두 파일에 있으면 나중에 고친 파일 것
+        stamps.append(mtime(path))
+    if not by_m:
+        return None
+    return {'months': [by_m[k] for k in sorted(by_m)], 'file': max(stamps)}
+
+
 # ───────────────────────── 실행 ─────────────────────────
 DOC_FILES = ['meta__info', 'prod__summary', 'prod__daily', 'sales__all', 'purchase__all',
              'stock__ledgers', 'labor__all', 'equip__boiler', 'reports__all']
@@ -1773,6 +1928,7 @@ def build(src, outdir, today=None, progress=print):
     reports = merge_reports(safe('일일 업무보고서(한글)', parse_reports, src),
                             safe('일일 업무보고서(엑셀)', parse_reports_xlsx, src), extra_reports)
     orders = safe('일간 작업지시서', parse_orders, src, outdir)
+    plans = safe('달력형 생산계획', parse_plans, src)
 
     def latest(dates):
         ds = [d for d in dates if d]
@@ -1804,11 +1960,15 @@ def build(src, outdir, today=None, progress=print):
         whos = sorted({r.get('by') or '' for r in extra_reports['reports']} - {''})
         sources.append({'key': 'reports_extra', 'label': '부장 일일업무보고서', 'area': '업무', 'latest': latest([r['d'] for r in extra_reports['reports']]),
                         'file': extra_reports['file'], 'note': ', '.join(whos)})
+    if plans:
+        last = plans['months'][-1]
+        sources.append({'key': 'plan', 'label': '달력형 생산계획', 'area': '생산', 'latest': None, 'file': plans['file'],
+                        'note': f"{int(last['ym'][5:])}월 계획까지 · {last['file']}"})
     if orders:
         sources.append({'key': 'orders', 'label': '일간 작업지시서', 'area': '업무', 'latest': latest([o['d'] for o in orders['orders']]), 'file': orders['file']})
 
     docs = {
-        'prod__summary': {'products': products, 'rawStock': raw_stock, 'oil': oil},
+        'prod__summary': {'products': products, 'rawStock': raw_stock, 'oil': oil, 'plans': (plans or {}).get('months', [])},
         'prod__daily': {'rows': sorted(daily, key=lambda r: (r['d'], r['p']))},
         'sales__all': sales or {'statements': []},
         'purchase__all': purchases or {'requests': []},

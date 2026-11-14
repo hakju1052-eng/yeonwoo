@@ -115,6 +115,14 @@ tr.sum td{font-weight:700;border-top:1px solid var(--line)}
 tr.dim td{color:var(--ink-3)}
 .wide{min-width:680px}
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:0}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(108px,1fr));gap:1px;background:var(--grid);min-width:770px}
+.cal .ch{background:var(--surface-2);font-size:12px;font-weight:600;color:var(--ink-2);padding:4px 8px;text-align:center}
+.cal .cd{background:var(--surface);min-height:96px;padding:6px 8px;font-size:12.5px;line-height:1.4;display:flex;flex-direction:column;gap:3px;overflow-wrap:anywhere}
+.cal .cd.out{background:var(--bg)} .cal .cd.off{background:var(--surface-2);color:var(--ink-3)} .cal .cd.today{box-shadow:inset 0 0 0 2px var(--accent)}
+.cal .dn{font-weight:700;font-size:13px;color:var(--ink-2)} .cal .today .dn{color:var(--accent)} .cal .dn small{font-weight:400;color:var(--ink-3);margin-left:4px}
+.cal .pl .sw{margin-right:4px} .cal .pl b{white-space:nowrap} .cal .pl.mm,.cal .pl .mm{color:var(--ink-2)} .cal .off .pl.mm{color:var(--ink-3)}
+.cal .ac{margin-top:auto;color:var(--ok);font-size:12px;border-top:1px dashed var(--line);padding-top:3px}
+.cal.wk .cd{min-height:70px}
 .bt{display:flex;align-items:center;gap:8px;min-width:140px}
 .bt i{display:block;height:8px;border-radius:0 4px 4px 0;background:var(--s1);min-width:2px;flex:none}
 .bt span{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -238,7 +246,7 @@ const LOG_TAGS = ["전체","설비","입고","출고","생산","인력","위생"
 const STALE_DAYS = 21;
 
 const S = { db:null, conn:"wait", D:null, tab:"home", month:null, today:null, admin:true,
-  logQ:"", logTag:"전체", logMonth:"전체", logBy:"전체", logLimit:20, ordD:null, logView:"rep", tables:{}, tips:{}, tipSeq:0 };
+  planM:null, planFor:null, logQ:"", logTag:"전체", logMonth:"전체", logBy:"전체", logLimit:20, ordD:null, logView:"rep", tables:{}, tips:{}, tipSeq:0 };
 
 /* ───────── 유틸 ───────── */
 const $ = (s, r=document) => r.querySelector(s);
@@ -444,6 +452,7 @@ function vHome(){
     sub: pu.length ? `${pu.length}건${bigBuy ? ` · 최대: ${esc(bigBuy.items[0].name)}` : ""}` : "결재요청 없음" });
   h += `<div class="kpi${stale.length ? " alert" : ""}"><span class="lbl">기록 점검</span><span class="v">${stale.length}<small>건</small></span><span class="s">${stale.length ? esc(stale.map(s => s.label).join(", ")) + ` · ${STALE_DAYS}일 넘게 새 기록 없음` : "매일 쓰는 일지가 모두 최근까지 기록됨"}</span>${stale.length ? `<span class="s"><button class="btn link" data-go="src">자료 현황 보기</button></span>` : ""}</div>`;
   h += `</section>`;
+  h += planWeek();
 
   const to = S.today.slice(0,7);
   const mcats = monthCats(addMonth(to,-12), to, M);
@@ -489,12 +498,77 @@ function vHome(){
 }
 
 /* ───────── 생산 ───────── */
+/* ───────── 달력형 생산계획 (업무자료 맨 위 'YYYY년_M월_달력형_생산계획.xlsx', 매달 새 파일) ───────── */
+function plans(){ return ((S.D.prod||{}).plans||[]); }
+function planOf(m){ return plans().find(p => p.ym === m); }
+function planDay(d){ const p = planOf(d.slice(0,7)); return p ? p.days.find(x => x.d === d) : null; }
+function planItemHtml(it){
+  const nm = it.p && it.flavor && it.p === "crunteen" ? "크런틴 " + it.flavor : it.name;
+  if (!it.qty) return `<div class="pl mm">${esc(nm)}</div>`;
+  return `<div class="pl">${it.p ? sw(it.p) : `<span class="sw" style="background:var(--viz-muted)"></span>`}${esc(nm)} <b>${esc(fmt(it.qty))}${esc(it.unit || "")}</b>${it.memo ? ` <span class="mm">${esc(it.memo)}</span>` : ""}</div>`;
+}
+function planCell(d, opt){                       // 달력 한 칸: 날짜 · 계획 · (지난 날은) 가공일지 실적
+  const e = planDay(d), dd = dObj(d);
+  const acts = d <= S.today ? daily().filter(r => r.d === d).map(r => {
+    const pk = keySum(r,"pack"), pu = keySum(r,"procUse"), pre = (r.preUse || 0);
+    const t = pk ? `포장 ${fmt(pk)}${PUNIT[r.p] || ""}` : pu ? `가공 ${fmt(pu)}kg` : pre ? `전처리 ${fmt(pre)}kg` : "";
+    return t ? `${esc(PNAME[r.p] === "코티노스 올리브유 감자칩" ? "코티노스" : PNAME[r.p])} ${t}` : ""; }).filter(Boolean) : [];
+  let body = "";
+  if (e && e.off) body = `<div class="pl mm">휴무</div>`;
+  else if (e && e.items && e.items.length) body = e.items.map(planItemHtml).join("");
+  else if (e && e.lines && e.lines.length) body = e.lines.map(l => `<div class="pl mm">${esc(l)}</div>`).join("");
+  return `<div class="cd${e && e.off ? " off" : ""}${d === S.today ? " today" : ""}"><span class="dn">${opt && opt.wd ? (dd.getMonth()+1) + "." + dd.getDate() + `<small>${WD[dd.getDay()]}</small>` : dd.getDate()}${d === S.today ? `<small>오늘</small>` : ""}</span>${body}${acts.length ? `<div class="ac">실적 ${acts.join(" · ")}</div>` : ""}</div>`;
+}
+function planPanel(M){
+  const all = plans(); if (!all.length) return "";
+  const pm = (S.planFor === M && S.planM && planOf(S.planM)) ? S.planM : (planOf(M) ? M : null);
+  const sel = `<select id="planM" aria-label="생산계획 달">${pm ? "" : `<option value="" selected>다른 달 계획 보기</option>`}${all.slice().reverse().map(p => `<option value="${p.ym}" ${p.ym === pm ? "selected" : ""}>${esc(mLong(p.ym))}</option>`).join("")}</select>`;
+  if (!pm) return `<div class="panel" style="margin-bottom:16px"><h3>생산계획 <small>달력형 생산계획 파일</small></h3><div class="logf">${sel}</div><p class="empty">${esc(mLong(M))} 생산계획 파일이 아직 없습니다.</p></div>`;
+  const P = planOf(pm);
+  let h = `<div class="panel" style="margin-bottom:16px"><h3>${esc(P.title || mLong(pm) + " 생산계획")} <small>${P.sub ? esc(P.sub) + " · " : ""}파일 ${esc(P.file || "")}${P.fileTime ? " (" + esc(P.fileTime) + " 수정)" : ""}</small></h3><div class="logf">${sel}</div>`;
+  const first = dObj(pm + "-01"), lead = (first.getDay() + 6) % 7, last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  let cells = ["월","화","수","목","금","토","일"].map(w => `<div class="ch">${w}</div>`).join("");
+  for (let i = 0; i < lead; i++) cells += `<div class="cd out"></div>`;
+  for (let k = 1; k <= last; k++) cells += planCell(pm + "-" + pad(k));
+  for (let i = (lead + last) % 7; i && i < 7; i++) cells += `<div class="cd out"></div>`;
+  h += `<div class="tw"><div class="cal">${cells}</div></div>`;
+  // 계획 대비 실적 (봉 단위 계획만 · 실적 = 가공일지의 포장 수)
+  const g = {}; const upto = S.today;
+  for (const dday of P.days) for (const it of (dday.items || [])){
+    if (!it.qty || (it.unit && it.unit !== "봉")) continue;
+    const key = it.p || it.name.replace(/\s+/g, "");
+    const v = g[key] = g[key] || { p:it.p, name: it.p ? PNAME[it.p] : it.name, plan:0, planTo:0, days:0 };
+    v.plan += it.qty; v.days++; if (dday.d <= upto) v.planTo += it.qty;
+  }
+  const rowsM = daily().filter(r => r.d.slice(0,7) === pm && r.d <= upto);
+  const gl = Object.values(g);
+  if (gl.length){
+    for (const v of gl) v.act = v.p ? sum(rowsM.filter(r => r.p === v.p), r => keySum(r,"pack")) : null;
+    const tp = sum(gl,"plan"), tt = sum(gl,"planTo"), ta = sum(gl, v => v.act || 0);
+    const rate = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
+    const cur = pm === S.today.slice(0,7);                 // 이번 달만 '오늘까지 계획' 칸을 따로 보여 줌
+    h += `<div class="tw" style="margin-top:12px"><table><thead><tr><th>제품</th><th class="n">생산일</th><th class="n">월 계획</th>${cur ? `<th class="n">오늘까지 계획</th>` : ""}<th class="n">실적(포장)</th><th class="n">달성률</th></tr></thead><tbody>` +
+      gl.map(v => `<tr><td class="nw">${v.p ? sw(v.p) : ""}${esc(v.name)}</td><td class="n">${v.days}일</td><td class="n">${fmt(v.plan)}봉</td>${cur ? `<td class="n">${fmt(v.planTo)}봉</td>` : ""}<td class="n">${v.act == null ? `<span class="muted">가공일지 없음</span>` : fmt(v.act) + "봉"}</td><td class="n">${v.act == null ? "—" : rate(v.act, v.planTo)}</td></tr>`).join("") +
+      `<tr class="sum"><td>합계</td><td class="n"></td><td class="n">${fmt(tp)}봉</td>${cur ? `<td class="n">${fmt(tt)}봉</td>` : ""}<td class="n">${fmt(ta)}봉</td><td class="n">${rate(ta, sum(gl, v => v.act == null ? 0 : v.planTo))}</td></tr></tbody></table></div>`;
+    h += `<p class="muted small" style="margin:6px 0 0">월 계획은 달력 칸의 수량을 더한 값입니다. 실적은 가공일지에 적힌 포장 수이고, 달성률은 ${cur ? "'오늘까지 계획'" : "월 계획"} 대비입니다(합계 달성률은 가공일지가 있는 제품만). 가공일지가 없는 제품(병아리콩칩·표고칩 등)은 실적을 알 수 없습니다.</p>`;
+  }
+  const extra = [...(P.summary || []).map(t => "계획서 요약: " + t), ...(P.notes || [])];
+  if (extra.length) h += `<p class="note">${extra.map(esc).join("<br>")}</p>`;
+  return h + `</div>`;
+}
+function planWeek(){                              // 한눈에: 오늘부터 7일
+  const ds = []; for (let i = 0; i < 7; i++){ const d = dObj(S.today); d.setDate(d.getDate() + i); ds.push(iso(d)); }
+  if (!ds.some(d => planDay(d))) return "";
+  return `<div class="panel" style="margin-bottom:16px"><h3>생산계획 <small>오늘부터 7일 · <button class="btn link" data-go="prod">달력 보기</button></small></h3><div class="tw"><div class="cal wk">${ds.map(d => planCell(d, { wd:true })).join("")}</div></div></div>`;
+}
+
 function vProd(){
   const M = S.month, P = period(M);
   const rows = daily().filter(r => inP(r.d,P));
   const ps = S.D.prod || {};
   const m = (label, val, unit, note) => `<div class="m"><span>${esc(label)}</span><b>${val ? esc(fmt(val,1)) : "—"}${val && unit ? `<small>${esc(unit)}</small>` : ""}</b>${note ? `<em>${esc(note)}</em>` : ""}</div>`;
   let h = `<div class="head"><div><h2>${esc(pText(P))} 생산</h2><p>제품별 가공일지에서 원물 입고, 가공 사용량, 포장·출고를 모았습니다. 재고는 일지에 적힌 값을 쓰고, 적힌 값이 없으면 포장에서 출고를 뺀 누계로 계산합니다.</p></div></div>`;
+  h += planPanel(M);
   h += `<div class="grid3">`;
   for (const k of PROD_ORDER){
     const p = prodByKey(k); if (!p) continue;
@@ -860,6 +934,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("change", e => { if (e.target.id === "logBy"){ S.logBy = e.target.value; S.logLimit = 20; render(); }
   if (e.target.id === "logMonth"){ S.logMonth = e.target.value; S.logLimit = 20; render(); }
+  if (e.target.id === "planM"){ S.planM = e.target.value || null; S.planFor = S.month; render(); }
   if (e.target.id === "ordD"){ S.ordD = e.target.value; render(); } });
 
 /* ───────── 시작 (스트림릿 컴포넌트) ─────────
