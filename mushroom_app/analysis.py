@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """배치 사슬·일차별 환경·월별 지표·이상 감시 규칙."""
+import re
 import numpy as np
 import pandas as pd
 from . import config as C
@@ -65,11 +66,20 @@ def _paengi_scrapes():
         S = S.dropna(subset=["긁기일"]).copy()
         new = S[S["긁기일"] > P["긁기일"].max()] if not P.empty else S
         if len(new):
-            P = pd.concat([P, new.assign(탱크=None)[["긁기일", "접종일", "배양출고", "불량", "방", "탱크"]]], ignore_index=True)
+            if "접종일목록" not in new:
+                new = new.assign(접종일목록="")
+            P = pd.concat([P, new.assign(탱크=None)[["긁기일", "접종일", "접종일목록", "배양출고", "불량", "방", "탱크"]]], ignore_index=True)
     if P.empty:
-        return pd.DataFrame(columns=["긁기일", "방", "배양출고", "긁기불량", "탱크", "접종일_긁기", "긁기메모"])
+        return pd.DataFrame(columns=["긁기일", "방", "배양출고", "긁기불량", "탱크", "접종일_긁기", "접종일목록", "긁기메모"])
     P["방"] = pd.to_numeric(P["방"], errors="coerce")
-    P = P.groupby(["긁기일", "방"]).agg(배양출고=("배양출고", "sum"), 긁기불량=("불량", "sum"), 탱크=("탱크", "first"), 접종일_긁기=("접종일", "first")).reset_index()
+    if "접종일목록" not in P:                       # 옛 캐시(접종일을 첫 날짜만 적어 둔 것)
+        P["접종일목록"] = ""
+    _first = pd.to_datetime(P["접종일"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+    P["접종일목록"] = P["접종일목록"].fillna("").astype(str).replace({"None": "", "nan": ""})
+    P["접종일목록"] = P["접종일목록"].where(P["접종일목록"] != "", _first)
+    _join = lambda x: ",".join(dict.fromkeys(d for v in x for d in str(v).split(",") if d))
+    P = P.groupby(["긁기일", "방"]).agg(배양출고=("배양출고", "sum"), 긁기불량=("불량", "sum"), 탱크=("탱크", "first"), 접종일_긁기=("접종일", "first"),
+                                    접종일목록=("접종일목록", _join)).reset_index()
     if not S.empty and "비고" in S:
         m = S.dropna(subset=["비고"]).assign(방=lambda d: pd.to_numeric(d["방"], errors="coerce"))[["긁기일", "방", "비고"]].drop_duplicates(["긁기일", "방"]).rename(columns={"비고": "긁기메모"})
         P = P.merge(m, on=["긁기일", "방"], how="left")
@@ -258,7 +268,7 @@ def grade_batches(df, crop):
     return df
 
 
-def paengi_export_candidates(K=None, today=None, look_back=20):
+def paengi_export_candidates(K=None, today=None, look_back=20, notes=None):
     """수확 예정 방의 예상 QC — 수출 포장에 쓸 방을 미리 고르기 위한 표 (v1.34.0). 반환: (표, 정보 dict).
     근거: QC 서식 B(2026-06-19~) 완료 배치에서 본수확 QC 는 균긁기 불량률·권지 불량률과 뚜렷이 반비례한다(순위상관 -0.6 안팎, 같은 달 안에서도 같다).
     이 둘은 수확 2~4주 전에 이미 적히므로, 같은 서식의 완료 배치로 'QC = a + b·log(1+긁기불량%) + c·log(1+권지불량%)' 를 맞춰 예상 QC 를 낸다.
@@ -372,6 +382,12 @@ def paengi_export_candidates(K=None, today=None, look_back=20):
                          "예상수확": est, "남은일": int((est - today).days), "긁기불량률%": rate, "권지불량률%": np.nan, "예상QC": p,
                          "수출후보": grade(p) + "(잠정)", "실제QC": np.nan,
                          "메모": str(r.get("긁기메모")) if r.get("긁기메모") is not None and str(r.get("긁기메모")) not in ("nan", "None") else "", "bid": ""})
+    if notes:                                              # 업무일지에 이 배치를 가리켜 적은 이슈 글(paengi_issue_notes)을 메모에 붙인다
+        for x in rows:
+            uid = x["bid"] or (f"발이실{int(x['발이실']):02d}({x['균긁기일']:%m/%d} 긁기)" if str(x["발이실"]).isdigit() else "")
+            nt = notes.get(uid)
+            if nt:
+                x["메모"] = (x["메모"] + " / " if x["메모"] else "") + "일지: " + nt
     D = pd.DataFrame(rows, columns=[c for c in cols if c != "예상판정"])
     if not D.empty:
         D["예상판정"] = D["예상QC"].map(band)
@@ -1158,12 +1174,13 @@ def _txt(s):
     return s.astype(object).where(s.notna(), "").astype(str).replace({"None": "", "nan": "", "NaT": ""}).str.strip()
 
 
-def repairs():
-    """수리 기록 한 줄 = 수리 한 건 (기계수리.xlsx 구역 시트·일백 시트 + 가습기 수리내역). 날짜순.
-    장소 = 방·장비(쉼표로 여러 개), 방 = 환경 기록의 방 이름(쉼표로 여러 개, 못 찾으면 빈칸)."""
+def repairs(with_worklog=True):
+    """수리 기록 한 줄 = 수리 한 건 (기계수리.xlsx 구역 시트·일백 시트 + 가습기 수리내역 + 업무일지에서 찾은 수리). 날짜순.
+    장소 = 방·장비(쉼표로 여러 개), 방 = 환경 기록의 방 이름(쉼표로 여러 개, 못 찾으면 빈칸).
+    업무일지에서 찾은 줄은 '시트' 가 '업무일지'(WL_SHEET) — 기계수리.xlsx 에 같은 수리가 있으면 넣지 않는다(worklog_repairs)."""
     R = etl_logs.load("repairs")
     if R.empty:
-        return pd.DataFrame(columns=REPAIR_COLS)
+        R = pd.DataFrame(columns=REPAIR_COLS + ["_src"])
     R = R.copy()
     for c in REPAIR_COLS[1:]:
         if c not in R:
@@ -1171,7 +1188,324 @@ def repairs():
         if c != "행":
             R[c] = _txt(R[c])
     R["date"] = pd.to_datetime(R["date"], errors="coerce").dt.normalize()
-    return R.dropna(subset=["date"]).sort_values(["date", "구역", "장소"]).reset_index(drop=True)[REPAIR_COLS]
+    R = R.dropna(subset=["date"])[REPAIR_COLS]
+    if with_worklog:
+        try:
+            WR = worklog_repairs(R)
+            if not WR.empty:
+                R = pd.concat([R, WR], ignore_index=True)
+        except Exception:                           # 업무일지 캐시가 깨져도 수리 이력은 보여야 한다
+            pass
+    return R.sort_values(["date", "구역", "장소"]).reset_index(drop=True)[REPAIR_COLS]
+
+
+# ───────────────────────── 업무일지 → 수리 기록 · 배양 이슈 (v1.35.0) ─────────────────────────
+WL_SHEET = "업무일지"                               # 수리 기록의 '시트' 칸에 넣는 출처 이름
+_WL_ACT = re.compile(r"교체|교환|수리|용접|고장|누수|보수|파손|터[져짐]|부러[져짐]|오작동|단선|과부하|트립|재설치|복원")
+_WL_FIX = re.compile(r"교체|교환|수리|용접|보수|재설치|복원|조[치절]|청소")
+_WL_SKIP = re.compile(r"교육|구입|구매|주문|입고|견적|의뢰|예정|문서|수리법|보상|요청서|계획|회의|파악|보고서|검사|검토|매뉴얼|메뉴얼|숙달|대응|돌발|발주|"
+                      r"미수금|계약|확인서|점검표|TEST|테스트|test|수리\s*전|교체\s*전|사진|기숙사|아파트|세대주|감정|공사대금|식당|정수기|세탁기|문고리|"
+                      r"손잡이|충전기|진행\s*중|[aA]/[sS]|수리\s*불가|수거|치수\s*측정|근로자|독촉|분해\s*(?:청소|살균)|파손\s*병|이동$|^→|미팅|사무실|인터넷|공유기")
+_WL_NOT_WRITER = {"김세영"}                          # 구매 담당 일지는 발주·A/S 접수 진행 상황이라 수리 기록으로 쓰지 않는다
+_WL_SS_HINT = re.compile(r"재배실|재배사|호실|뒤집기|솎기")
+_WL_SS_EQUIP = re.compile(r"가습기|히터|난방|순환\s*펌프|시로코|소하|조명|흡기")
+
+
+def _wl_clean(t):
+    t = re.sub(r"\s+", " ", str(t)).strip()
+    t = re.sub(r"^[\(（]\s*([^()（）]*?)\s*[\)）]$", r"\1", t)        # 통째로 괄호에 든 줄
+    t = re.sub(r"^(?:기\s*타\s*[:：]\s*)?(?:[○●■▶▷•·\-–]\s*)?", "", t)   # '기 타: ○ …' · '기타: …'
+    t = re.sub(r"^[①-⑳]\s*|^\d{1,2}(?:-\d)?[.)]\s+", "", t)         # '② …' · '4-1. …'
+    return t.strip(" .")
+
+
+def _wl_area(t):
+    if re.search(r"솥|가마", t):
+        return "입병실"                              # 살균솥(가마)은 입병실 구역 — '접종실 2번솥'도 솥 수리
+    if re.search(r"(?:새송이|세송이)\s*배양", t):
+        return "새송이 배양실"
+    if re.search(r"액\s*탱크|종균실", t):
+        return "접종·냉각실"
+    a = etl_logs._area_from_text(t, default="")
+    if a:
+        return a
+    if _WL_SS_HINT.search(t) or (re.search(r"(?<!\d)\d\s*-\s*\d{1,2}(?!\d)", t) and _WL_SS_EQUIP.search(t)):
+        return "새송이 재배사"
+    if re.search(r"혼합기|배합기|솥|마개|타공", t):
+        return "입병실"
+    if re.search(r"포장기|선별", t):
+        return "포장·저장고"
+    return "기타 장비"
+
+
+def worklog_repairs(R=None):
+    """업무일지(app_cache/worklog.json)에서 수리·고장 줄을 뽑아 수리 기록과 같은 모양으로 만든다 (v1.35.0).
+    기계수리.xlsx 는 한 사람(재배 관리자)이 모아 적는 장부라 며칠씩 늦고(2026-11-14 현재 10/27 까지), 새송이 재배사·접종실·입병실에서
+    다른 담당자가 고친 일은 빠진다. 업무일지에는 그날 고친 일이 담당자별로 적혀 있어 그 틈을 메운다.
+      · 고른 줄: 날마다 되풀이되는 양식 줄(rep)이 아니고, 교체·수리·용접·고장·누수… 낱말이 있고, 교육·구매·견적·계획·사진 설명 같은 줄이 아닌 것
+      · 기계수리.xlsx 에 같은 날(±1일) 닮은 줄(글자 45% 이상)이 있으면 뺀다 — 재배 관리자 업무일지는 장부와 같은 내용이 많다
+      · 같은 사람이 어제 일지를 복사해 며칠째 같은 줄이 이어지면 첫날 것만, 같은 날 여러 사람이 같은 고장을 적으면 한 줄로(다른 사람 글은 비고에)
+      · 구역·장소·방·분류는 기계수리.xlsx 와 같은 규칙(etl_logs.repair_places·repair_category)으로 글에서 뽑는다
+    '시트' = '업무일지', '비고' = '업무일지 · 작성자[ · 고장 보고(고친 기록 없음)]'."""
+    import difflib
+    from . import etl_worklog
+    cols = list(REPAIR_COLS)
+    try:
+        recs = etl_worklog.load().get("recs") or []
+    except Exception:
+        recs = []
+    if not recs:
+        return pd.DataFrame(columns=cols)
+    norm = etl_logs._rep_norm
+    base = {}
+    if R is not None and len(R):
+        for d, t in zip(R["date"], R["내용"]):
+            base.setdefault(pd.Timestamp(d).normalize(), []).append(norm(t))
+    sim = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
+    one = pd.Timedelta(days=1)
+    rows, seen = [], {}
+    for r in sorted(recs, key=lambda x: x.get("d") or ""):
+        who = r.get("who") or ""
+        d = pd.to_datetime(r.get("d"), errors="coerce")
+        if pd.isna(d) or who in _WL_NOT_WRITER:
+            continue
+        parent_t, parent_row = "", None                 # 바로 위 큰 줄(들여쓴 줄이 아닌 줄)과, 그 줄이 수리로 뽑혔으면 그 기록
+        for l in r.get("lines") or []:
+            t = _wl_clean(l.get("t"))
+            sub = bool(l.get("sub"))
+            if not sub:
+                parent_t, parent_row = t, None
+            if l.get("rep"):
+                continue
+            if len(t) < 6 or not _WL_ACT.search(t) or _WL_SKIP.search(t):
+                continue
+            if sub and parent_row is not None:             # 수리 줄 아래 들여쓴 설명은 그 수리의 비고로
+                if etl_logs._rep_norm(t) != parent_row["_n"] and t not in parent_row["_more"]:
+                    parent_row["_more"].append(t)
+                continue
+            n = norm(re.sub(r"\d{1,2}:\d{2}", "", t))
+            k = (who, n)
+            if k in seen and (d - seen[k]).days <= 4:      # 어제 일지를 복사해 남은 줄
+                seen[k] = d
+                continue
+            seen[k] = d
+            if any(sim(n, b) >= 0.45 for dd in (d, d - one, d + one) for b in base.get(dd, ())):
+                continue                                   # 기계수리.xlsx 에 이미 있는 수리
+            area = _wl_area(t)
+            ctx = t
+            if sub and area == "기타 장비" and parent_t:     # 들여쓴 줄에 장소가 없으면 위 큰 줄에서 찾는다
+                pa = _wl_area(parent_t)
+                if pa != "기타 장비":
+                    area, ctx = pa, parent_t + " " + t
+            tt = ctx.replace("솥", "가마")                  # '1번솥' = 1번 살균가마
+            places, rooms = etl_logs.repair_places(tt, area)
+            cat = "가습기 부품" if "가습기" in t else etl_logs.repair_category(tt, area)
+            rows.append({"date": d.normalize(), "구역": area, "_places": places, "_rooms": rooms, "분류": cat, "내용": t, "사양": "",
+                         "업체": etl_logs._repair_vendor(t), "_who": [who], "_n": n, "_only_fail": not _WL_FIX.search(t), "_more": [],
+                         "_tok": {w.upper() for w in re.findall(r"[A-Za-z]{4,}", t)}})
+            if not sub:
+                parent_row = rows[-1]
+    keep = []
+    for x in rows:                                         # 같은 날(±1일) 여러 사람이 적은 같은 고장은 한 줄로
+        dup = None
+        for kx in reversed(keep):
+            if (x["date"] - kx["date"]).days > 1:
+                break
+            spec_a, spec_b = etl_logs._rep_specific(kx["_places"], kx["구역"]), etl_logs._rep_specific(x["_places"], x["구역"])
+            same_place = bool(spec_a & spec_b) or (set(kx["_places"]) == set(x["_places"]) and kx["분류"] == x["분류"] and kx["구역"] not in ("기타 장비", "새송이 재배사"))
+            if sim(kx["_n"], x["_n"]) >= 0.5 or (same_place and kx["분류"] == x["분류"]) or (kx["date"] == x["date"] and kx["_tok"] & x["_tok"]):
+                dup = kx; break                            # 닮은 글 · 같은 방의 같은 종류 수리 · 같은 날 같은 장비 이름(CCTV 등)
+        if dup is None:
+            keep.append(x)
+            continue
+        if x["_who"][0] not in dup["_who"]:
+            dup["_who"].append(x["_who"][0])
+        if x["_n"] != dup["_n"]:
+            dup["_more"].append(f"{x['_who'][0]}: {x['내용']}")
+        dup["_more"] += [m for m in x["_more"] if m not in dup["_more"]]
+        dup["_only_fail"] = dup["_only_fail"] and x["_only_fail"]
+        if x["업체"] and not dup["업체"]:
+            dup["업체"] = x["업체"]
+        for pl in x["_places"]:
+            if pl in etl_logs._rep_specific(x["_places"], x["구역"]) and pl not in dup["_places"]:
+                dup["_places"].append(pl)
+        for rm in x["_rooms"]:
+            if rm not in dup["_rooms"]:
+                dup["_rooms"].append(rm)
+    out = []
+    for i, x in enumerate(keep):
+        note = f"{WL_SHEET} · {'·'.join(x['_who'])}" + (" · 고장 보고(고친 기록 없음)" if x["_only_fail"] else "")
+        if x["_more"]:
+            note += " / " + " / ".join(x["_more"][:4])
+        out.append({"date": x["date"], "구역": x["구역"], "장소": ", ".join(x["_places"]), "방": ", ".join(x["_rooms"]), "분류": x["분류"], "내용": x["내용"],
+                    "사양": "", "업체": x["업체"], "비고": note, "시트": WL_SHEET, "행": i + 1})
+    return pd.DataFrame(out, columns=cols)
+
+
+_CI_TOPIC = re.compile(r"배양|접종|종균|원균|액\s*탱크|탱크|살균|긁기|권지|오염|잡균|곰팡이|세균|배지|입병|노즐|주수")
+_CI_QUAL = re.compile(r"불량(?!\s*(?:교체|교환))|오염|잡균|곰팡이|세균|미숙|지연|검출|폐기|패기|편차|넘침|의심|실수|과다|노화균")
+_CI_ROOM = re.compile(r"(?:배양실|공조).*(?:고장|누수|낙수|이상(?!\s*(?:유무|없))|문제)|(?:고장|누수|낙수).*(?:배양실|공조)")
+_CI_SKIP = re.compile(r"특이\s*사항\s*없|특이\s*상항\s*없|이상\s*없|문서|엑셀|파악|교육|회의|계획|매뉴얼|메뉴얼|양상 및 수량|점검\s+수,토|불량 점검$|대응$|수리\s*대응|"
+                      r"쓰레기|분리수거|리스테리아|체인\s*교|콘베아|컨베이어")
+_CI_KIND = r"접종|권지|균긁기|긁기|살균|입병|수확"
+_CI_REF_A = re.compile(r"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})((?:\s*,\s*(?:\d{1,2}\s*/\s*)?\d{1,2})*)\s*(?:일자?)?\s*(?:[월화수목금토일]요일)?[^\d/]{0,7}?(" + _CI_KIND + ")")
+_CI_REF_B = re.compile(r"(접종|권지|살균|입병)\s*(\d{1,2})\s*/\s*(\d{1,2})(?!\s*/)")
+_CI_AREA = [("접종", r"접종|노즐"), ("살균", r"살균|솥|가마"), ("물(주수)", r"물\s*탱크|지하수|저수조|주수|빗물"), ("종균·액탱크", r"종균|원균|탱크|삼각|샤레|플라스크|PDA"),
+            ("균긁기·권지", r"긁기|권지|타공"), ("배양", r".")]
+
+
+def _ci_refs(t, note_d):
+    """글에서 '10/5 접종' · '10/24일 권지' · '접종8/31' 같은 기준일을 찾는다 → [(종류, 날짜)]. 연도는 글 쓴 날 기준(그보다 뒤 달이면 지난해)."""
+    out = []
+
+    def mk(mo, d):
+        y = note_d.year if (mo, d) <= (note_d.month, note_d.day) else note_d.year - 1
+        try:
+            return pd.Timestamp(year=y, month=mo, day=d)
+        except ValueError:
+            return None
+    for m in _CI_REF_A.finditer(t):
+        kind = "균긁기" if m.group(4) == "긁기" else m.group(4)
+        days, mo = [(int(m.group(1)), int(m.group(2)))], int(m.group(1))
+        for tok in re.findall(r"(?:(\d{1,2})\s*/\s*)?(\d{1,2})", m.group(3) or ""):
+            mo = int(tok[0]) if tok[0] else mo
+            days.append((mo, int(tok[1])))
+        out += [(kind, mk(a, b)) for a, b in days]
+    for m in _CI_REF_B.finditer(t):
+        out.append((m.group(1), mk(int(m.group(2)), int(m.group(3)))))
+    dd = {}
+    for k, d in out:
+        if d is not None and k not in dd.setdefault(d, []):
+            dd[d].append(k)
+    return [(("접종" if "접종" in ks else ks[0]), d) for d, ks in dd.items()]   # '균긁기 접종8/31' 은 접종 기준
+
+
+def _paengi_units(K=None):
+    """배치 잇기용 표: 균긁기 한 번(긁기일·발이실) = 한 줄. 권지가 끝난 것은 배치 번호(bid)와 권지·수확·QC 가 붙고,
+    아직 발이실에 있는 것은 bid 없이 '발이실05(10/30 긁기)' 로 부른다."""
+    P = _paengi_scrapes()
+    K = paengi_chain() if K is None else K
+    if P.empty:
+        return pd.DataFrame(columns=["uid", "bid", "긁기일", "방", "_inoc", "긁기불량률%", "권지일", "권지불량률%", "QC", "수확시작", "수확종료"])
+    U = P[P["배양출고"] > 0].copy()
+    U["긁기불량률%"] = 100 * U["긁기불량"] / U["배양출고"]
+    U["_inoc"] = [set(filter(None, str(v or "").split(","))) for v in U["접종일목록"]]
+    if K is not None and not K.empty:
+        kk = K[[c for c in ["bid", "입상일", "발이실", "권지일", "권지불량률%", "QC", "수확시작", "수확종료"] if c in K]].rename(columns={"입상일": "긁기일", "발이실": "방"})
+        U = U.merge(kk.drop_duplicates(["긁기일", "방"]), on=["긁기일", "방"], how="left")
+    for c in ("bid", "권지일", "권지불량률%", "QC", "수확시작", "수확종료"):
+        if c not in U:
+            U[c] = np.nan
+    U["uid"] = [b if isinstance(b, str) and b else f"발이실{int(r):02d}({d:%m/%d} 긁기)" if pd.notna(r) else f"({d:%m/%d} 긁기)" for b, r, d in zip(U["bid"], U["방"], U["긁기일"])]
+    return U.reset_index(drop=True)
+
+
+def worklog_culture_issues(K=None):
+    """업무일지에서 배양·접종·살균·종균 쪽 이슈 글을 모으고, 글에 적힌 기준일(○/○ 접종·권지·균긁기·수확)로 팽이 배치에 잇는다 (v1.35.0).
+    반환 DataFrame[date, who, 영역, 내용, 기준, bids(목록), 배치요약] — 최근 것부터.
+      · 고른 줄: 되풀이 양식 줄이 아니고, 배양 쪽 낱말(배양·접종·종균·살균·긁기·권지·오염…)이 있으면서
+        품질 낱말(불량·오염·세균·곰팡이·미숙·지연·검출·폐기…)이 있거나 배양실·공조의 고장·누수인 줄. 장비 수리만 적은 줄은 수리 이력으로 간다.
+        '특이사항 없음'·문서 작성·교육 줄은 뺀다. 이슈 줄에 바로 이어지는 줄(들여쓴 설명, 기준일 없는 다음 이슈 줄)은 한 글로 묶는다.
+      · 배치 잇기(_paengi_units — 발이실에 있는 배치 포함): '접종' = 접종일(이틀에 걸친 배치는 둘 다)이 그 날짜 · '권지' = 권지일 · '수확' = 수확 기간 ·
+        '균긁기' = 그 날짜에 긁은 배치 또는 그 날짜에 접종한 배치 중 균긁기가 글 쓴 날에 더 가까운 쪽
+        ('10/5 균긁기 정상 배지'를 10/31 에 적었다면 10/5 에 긁은 배치가 아니라 10/5 접종분을 그 무렵 긁은 배치).
+        '새송이'가 든 글과 살균·입병 기준일은 잇지 않는다(팽이 배치 표에 살균일이 없음)."""
+    from . import etl_worklog
+    cols = ["date", "who", "영역", "내용", "기준", "bids", "배치요약"]
+    try:
+        recs = etl_worklog.load().get("recs") or []
+    except Exception:
+        recs = []
+    rows = []
+    for r in recs:
+        d = pd.to_datetime(r.get("d"), errors="coerce")
+        who = r.get("who") or ""
+        if pd.isna(d) or who in _WL_NOT_WRITER:
+            continue
+        cur = None                                         # 지금 글을 잇고 있는 이슈
+        for l in list(r.get("lines") or []) + [x for x in (r.get("note") or []) if isinstance(x, dict)]:
+            t = _wl_clean(l.get("t"))
+            if l.get("rep") or len(t) < 5:
+                cur = None
+                continue
+            sub = bool(l.get("sub"))
+            is_issue = bool(_CI_TOPIC.search(t) and (_CI_QUAL.search(t) or _CI_ROOM.search(t)) and not _CI_SKIP.search(t))
+            if not is_issue:
+                if sub and cur is not None and not _CI_SKIP.search(t):
+                    cur["내용"] += " / " + t                # 이슈 아래 들여쓴 설명
+                else:
+                    cur = None
+                continue
+            refs = _ci_refs(t, d)
+            if cur is not None and not refs:               # 기준일 없이 이어지는 줄은 같은 이슈 (새 기준일이 나오면 새 이슈)
+                cur["내용"] += " / " + t
+                continue
+            cur = {"date": d.normalize(), "who": who, "내용": t, "_refs": refs}
+            rows.append(cur)
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    rows.sort(key=lambda x: x["date"])
+    seen, keep = {}, []
+    for x in rows:                                         # 같은 사람이 며칠째 같은 글을 이어 적은 것은 첫날 것만
+        if not x["_refs"] and (len(x["내용"]) < 12 or x["내용"].count(")") > x["내용"].count("(")):
+            continue                                       # 앞뒤가 잘린 토막 글('세균 불검출', '…상황 )')
+        k = (x["who"], etl_logs._rep_norm(x["내용"]))
+        if k in seen and (x["date"] - seen[k]).days <= 4:
+            seen[k] = x["date"]; continue
+        seen[k] = x["date"]; keep.append(x)
+    try:
+        U = _paengi_units(K)
+    except Exception:
+        U = pd.DataFrame()
+    f2 = lambda v: "—" if pd.isna(v) else f"{v:.2f}%"
+
+    def link(kind, rd, note_d):
+        if U.empty or kind in ("살균", "입병"):
+            return []
+        key = rd.strftime("%Y-%m-%d")
+        by_inoc = U[[key in s_ for s_ in U["_inoc"]]]
+        if kind == "접종":
+            return list(by_inoc["uid"])
+        if kind == "권지":
+            return list(U[U["권지일"] == rd]["uid"])
+        if kind == "수확":
+            return list(U[(U["수확시작"] <= rd) & (U["수확종료"] >= rd)]["uid"])
+        if kind == "균긁기":
+            a = U[U["긁기일"] == rd]
+            ga = abs((note_d - rd).days) if len(a) else 10 ** 6
+            gb = (by_inoc["긁기일"] - note_d).abs().dt.days.min() if len(by_inoc) else 10 ** 6
+            return list((a if ga <= gb else by_inoc)["uid"])
+        return []
+    out = []
+    for x in keep:
+        t = x["내용"]
+        bids = []
+        if not re.search(r"새송이|세송이", t):
+            for kind, rd in x["_refs"]:
+                for b in link(kind, rd, x["date"]):
+                    if b not in bids:
+                        bids.append(b)
+        summ = ""
+        if bids:
+            sub_ = U[U["uid"].isin(bids)]
+            summ = " · ".join(f"{b.uid} 긁기 불량 {f2(b['긁기불량률%'])}" + (f", 권지 {f2(b['권지불량률%'])}" if pd.notna(b["권지일"]) else "") + (f", QC {b['QC']:.1f}" if pd.notna(b["QC"]) else "")
+                              for _, b in sub_.iterrows())
+        out.append({"date": x["date"], "who": x["who"], "영역": next(n for n, pat in _CI_AREA if re.search(pat, t)), "내용": t,
+                    "기준": ", ".join(f"{rd:%m/%d} {kind}" for kind, rd in x["_refs"]), "bids": bids, "배치요약": summ})
+    return pd.DataFrame(out, columns=cols).sort_values("date", ascending=False).reset_index(drop=True)
+
+
+def paengi_issue_notes(K=None, CI=None):
+    """배치 → 업무일지 이슈 글 (worklog_culture_issues 가 그 배치에 이은 글들). 반환 dict{uid: '10/28 남기천: … ; 10/30 …'}
+    uid = 배치 번호(bid), 아직 발이실이면 '발이실05(10/30 긁기)'."""
+    CI = worklog_culture_issues(K) if CI is None else CI
+    out = {}
+    if CI is None or CI.empty:
+        return out
+    for _, r in CI.sort_values("date").iterrows():
+        for b in r["bids"]:
+            out.setdefault(b, []).append(f"{r['date']:%m/%d} {r['who']}: {r['내용']}")
+    return {b: " ; ".join(v) for b, v in out.items()}
 
 
 def repair_costs():

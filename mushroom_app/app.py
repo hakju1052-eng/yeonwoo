@@ -31,8 +31,16 @@ PAL = {"실측": "#2a78d6", "설정": "#8a8f84", "비교": "#eb6834", "보조": 
 # ───────────────────────── 데이터 로딩 ─────────────────────────
 def _ver():
     """캐시 파일들의 수정시각 → 캐시 키."""
-    fs = glob.glob(os.path.join(C.CACHE_DIR, "*.parquet"))
+    fs = glob.glob(os.path.join(C.CACHE_DIR, "*.parquet")) + glob.glob(os.path.join(C.CACHE_DIR, "worklog.json"))   # 업무일지에서 수리·배양 이슈를 뽑아 쓴다(v1.35.0)
     return tuple(sorted((os.path.basename(f), int(os.path.getmtime(f))) for f in fs))
+
+
+@st.cache_data(max_entries=2, show_spinner=False)
+def load_culture_issues(ver):
+    """업무일지의 배양·접종 이슈 글과, 배치별로 이어 붙인 메모 (v1.35.0)"""
+    K, _ = load_paengi(ver)
+    CI = A.worklog_culture_issues(K)
+    return CI, A.paengi_issue_notes(K, CI)
 
 
 @st.cache_data(max_entries=2, show_spinner="환경 데이터 읽는 중…")
@@ -336,9 +344,9 @@ def page_overview(ver):
 
 
 # ───────────────────────── 배치 탐색기: 수출 포장 후보(수확 예정 방의 예상 QC) ─────────────────────────
-def export_candidates_box(K):
+def export_candidates_box(K, notes=None):
     """수확 전인 방(생육실·발이실)의 예상 QC 표 — 수출 물량을 어느 방에서 포장할지 미리 고르는 용도 (v1.34.0)."""
-    D, info = A.paengi_export_candidates(K)
+    D, info = A.paengi_export_candidates(K, notes=notes)
     with st.expander("수출 포장 후보 — 수확 예정 방의 예상 QC", expanded=True):
         if not info.get("ok"):
             st.caption(info.get("why") or "예상할 자료가 부족합니다."); return
@@ -366,7 +374,7 @@ def export_candidates_box(K):
                                     "긁기불량률%": st.column_config.NumberColumn("긁기 불량 %", format="%.2f"), "권지불량률%": st.column_config.NumberColumn("권지 불량 %", format="%.2f"),
                                     "균긁기일": st.column_config.DateColumn("균긁기", format="MM-DD"), "권지일": st.column_config.DateColumn("권지", format="MM-DD"),
                                     "생육실": st.column_config.TextColumn(help="발이실 단계인 방은 생육실이 1→12번 순서로 돌아가는 것을 따라 다음 차례를 '(예상)'으로 적었습니다"),
-                                    "메모": st.column_config.TextColumn("현장 메모", help="재배일보 균긁기·권지 시트의 비고")})
+                                    "메모": st.column_config.TextColumn("현장 메모", width="large", help="재배일보 균긁기·권지 시트의 비고 + 업무일지에서 이 배치(접종일·권지일)를 가리켜 적은 이슈 글('일지:')")})
         txt = (f"보는 법: 🟢 추천 = 예상 QC {info['hi']:.0f}점 이상(불량 신호 없음) · ⚪ 보통 = {info['lo']:.0f}\\~{info['hi']:.0f}점 · 🔴 비추천 = {info['lo']:.0f}점 미만. "
                f"'(잠정)'은 아직 발이실이라 균긁기 불량률만으로 본 것이고, '(실측)'은 이미 나온 본수확 QC 로 매긴 것입니다. ")
         if info.get("val_n"):
@@ -385,7 +393,11 @@ def page_batches(ver, crop):
         K, PE = load_paengi(ver)
         if K.empty:
             st.info("팽이 배치가 없습니다. 배양소관리(권지 시트)와 팽이 일지가 필요합니다."); return
-        export_candidates_box(K)
+        try:
+            _, _notes = load_culture_issues(ver)
+        except Exception:
+            _notes = {}
+        export_candidates_box(K, _notes)
         T = K.copy()
         T["방"] = T["생육실"].map(lambda r: f"생육실{int(r):02d}")
         T["발이"] = T["발이실"].map(lambda r: f"발이실{int(r):02d}" if pd.notna(r) else "—")
@@ -452,6 +464,13 @@ def page_batches(ver, crop):
     if str(b.get("종합평가", "—")) != "—":
         st.caption(f"종합평가 **{b['종합평가']}** (같은 계절 상위 {b['계절상위%']:.0f}%) — {b.get('평가근거', '')}"
                    + (f" · QC 절대 판정 **{b['QC판정']}** (기준서 앵커: 85 양호 / 79 보통)" if str(b.get('QC판정', '—')) != '—' else ""))
+    if crop == "팽이":
+        try:
+            _nt = load_culture_issues(ver)[1].get(bid)
+        except Exception:
+            _nt = None
+        if _nt:
+            st.info("**업무일지에 이 배치를 가리켜 적은 글** — " + _nt.replace(" ; ", "  \n· "))
 
     # 상세: 배치 보고서를 화면 형태로 (원재료 → 입병 → 살균 → 냉각 → 접종 → 배양 → 균긁기 → 발이실 → 권지 → 생육실 → 수확). PDF는 배치 이력에서.
     if crop == "팽이":
@@ -697,6 +716,33 @@ def page_cult(ver):
         if len(j) >= 6:
             cc = {k: j[k].corr(j["균긁기불량(팽이)"]) for k in ("온도", "습도", "CO2")}
             st.caption("월별 팽이 균긁기 불량률과의 상관: " + " · ".join(f"{k} r={v:.2f}" for k, v in cc.items()) + f" (n={len(j)}개월, 참고용)")
+    st.subheader("업무일지에 적힌 배양·접종 이슈")
+    try:
+        CI, _ = load_culture_issues(ver)
+    except Exception:
+        CI = pd.DataFrame()
+    if CI.empty:
+        st.caption("업무일지에서 배양·접종 쪽 이슈 글을 찾지 못했습니다.")
+    else:
+        st.caption("업무일지에서 배양·접종·살균·종균·균긁기 쪽에 '불량·오염·세균·미숙·지연·검출…'이 적힌 글만 모았습니다(날마다 되풀이되는 양식 줄과 '특이사항 없음'은 뺌). "
+                   "글에 '10/5 접종'·'10/24일 권지'처럼 기준일이 있으면 그 날짜의 팽이 배치를 찾아 불량률·QC 를 옆에 붙였습니다 — 아직 발이실에 있는 배치는 '발이실05(10/30 긁기)'로 나옵니다.")
+        c1, c2, c3 = st.columns([1, 2, 1.4])
+        per = c1.selectbox("기간", ["최근 60일", "최근 180일", "전체"], key="ci_per")
+        ars = c2.multiselect("영역", sorted(CI["영역"].unique()), key="ci_area", placeholder="전체 영역")
+        only = c3.checkbox("배치에 이어진 글만", value=False, key="ci_link")
+        V = CI.copy()
+        if per != "전체":
+            V = V[V["date"] >= pd.Timestamp.today().normalize() - pd.Timedelta(days=60 if per == "최근 60일" else 180)]
+        if ars:
+            V = V[V["영역"].isin(ars)]
+        if only:
+            V = V[V["bids"].map(len) > 0]
+        if V.empty:
+            st.caption("이 조건에 맞는 글이 없습니다.")
+        else:
+            st.dataframe(V.assign(날짜=V["date"].dt.strftime("%Y-%m-%d"))[["날짜", "who", "영역", "내용", "기준", "배치요약"]].rename(
+                columns={"who": "작성자", "기준": "기준일", "배치요약": "이어진 배치 (불량률·QC)"}), hide_index=True, **_FULL, height=min(38 * (len(V) + 1) + 3, 460),
+                column_config={"내용": st.column_config.TextColumn(width="large"), "이어진 배치 (불량률·QC)": st.column_config.TextColumn(width="large")})
     st.subheader("배치별 배양 결과 (팽이)")
     K, _ = load_paengi(ver)
     if not K.empty:
@@ -983,7 +1029,17 @@ def page_repairs(ver, me):
     if RP.empty:
         st.info(f"수리 기록이 없습니다. 권석현 폴더(`{C.log_dir('kwon_ss')}`)의 기계수리.xlsx 를 읽어야 합니다 — 데이터 관리 → '일지 다시 읽기'."); return
     today = pd.Timestamp.today().normalize()
-    st.caption(f"기계수리.xlsx(구역별 시트 + 일백 냉동 공사 시트) · 가습기 수리내역.xlsx — {RP.date.min():%Y-%m-%d} ~ {RP.date.max():%Y-%m-%d}, {len(RP):,}건. "
+    n_wl = int((RP["시트"] == A.WL_SHEET).sum())
+    if n_wl:
+        ledger_last = RP[RP["시트"] != A.WL_SHEET].date.max()
+        inc = st.checkbox(f"업무일지에서 찾은 수리·고장 {n_wl:,}건 포함", value=True, key="rp_wl",
+                          help="기계수리.xlsx 에 아직 안 적혔거나(장부는 며칠 늦게 적힙니다) 다른 담당자가 고쳐 장부에 없는 수리를 업무일지에서 찾아 넣은 것입니다. "
+                               "장부에 같은 날 닮은 줄이 있으면 넣지 않습니다. '전체 목록'의 시트 칸이 '업무일지', 비고에 작성자가 나옵니다.")
+        if not inc:
+            RP = RP[RP["시트"] != A.WL_SHEET]
+    st.caption(f"기계수리.xlsx(구역별 시트 + 일백 냉동 공사 시트) · 가습기 수리내역.xlsx" + (f" · 업무일지에서 찾은 수리 {n_wl:,}건" if n_wl and inc else "")
+               + f" — {RP.date.min():%Y-%m-%d} ~ {RP.date.max():%Y-%m-%d}, {len(RP):,}건"
+               + (f" (장부는 {ledger_last:%m/%d} 까지 적혀 있고 그 뒤는 업무일지 기록)" if n_wl and inc and pd.notna(ledger_last) and ledger_last < RP.date.max() else "") + ". "
                "같은 수리를 구역 시트와 일백 시트에 둘 다 적은 줄은 한 줄로 합쳤습니다(다른 시트의 글은 비고에). "
                "장소(방·장비)와 분류는 내용 글에서 자동으로 뽑은 것이라 가끔 틀릴 수 있습니다.")
     c1, c2, c3, c4 = st.columns([1.1, 1.6, 1.6, 1.4])

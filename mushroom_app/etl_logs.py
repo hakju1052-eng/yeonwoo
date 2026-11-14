@@ -256,6 +256,30 @@ def _first_date(v, ref):
     return pd.NaT
 
 
+def _all_dates(v, ref):
+    """'10/2,5' · '9/28,10/1' · 날짜 한 개 → 'YYYY-MM-DD,YYYY-MM-DD' (접종일이 이틀에 걸친 배치의 모든 접종일). 못 읽으면 ''."""
+    if v is None or v is pd.NaT or (isinstance(v, float) and v != v):
+        return ""
+    if isinstance(v, (dt.datetime, dt.date, pd.Timestamp)):
+        t = _first_date(v, ref)
+        return t.strftime("%Y-%m-%d") if not pd.isna(t) else ""
+    out, mo = [], None
+    for tok in re.split(r"[,，\s]+", str(v).strip()):
+        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})", tok)
+        if m:
+            mo, d = int(m.group(1)), int(m.group(2))
+        elif re.fullmatch(r"\d{1,2}", tok) and mo is not None:
+            d = int(tok)
+        else:
+            continue
+        y = ref.year if mo <= ref.month else ref.year - 1
+        try:
+            out.append(pd.Timestamp(year=y, month=mo, day=d).strftime("%Y-%m-%d"))
+        except ValueError:
+            pass
+    return ",".join(dict.fromkeys(out))
+
+
 def parse_cult(path):
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     out = {}
@@ -286,12 +310,13 @@ def parse_cult(path):
         P["균긁기량"] = num(_coalesce(P, "균긁기", "균긁기량"))
         _inoc = _coalesce(P, "접종일", "접종일자")
         P["접종일"] = [_first_date(v, d) for v, d in zip(_inoc if _inoc is not None else [None] * len(P), P["일자"])]
+        P["접종일목록"] = [_all_dates(v, d) for v, d in zip(_inoc if _inoc is not None else [None] * len(P), P["일자"])]
         _room = _coalesce(P, roomcol, roomcol + "NO", "비고/" + roomcol)
         P["방"] = _room.astype(str).str.extract(r"(\d+)")[0] if _room is not None else None
         P["방_raw"] = _room.astype(str) if _room is not None else None
         P["탱크"] = P["탱크 NO."].astype(str) if "탱크 NO." in P else None
         P = P[P["배양출고"] > 0]
-        out[key] = P[["일자", "접종일", "배양출고", "불량", "균긁기량", "방", "방_raw", "탱크"]].rename(columns={"일자": "긁기일"})
+        out[key] = P[["일자", "접종일", "접종일목록", "배양출고", "불량", "균긁기량", "방", "방_raw", "탱크"]].rename(columns={"일자": "긁기일"})
     ws = sheet(["권지"])
     if ws is not None:
         K = _blocks(ws, 10)
@@ -410,7 +435,7 @@ def _keep_file_month(path, res):
     return out
 
 
-PARSE_RULES = {"ledger": 3, "bottling": 2}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
+PARSE_RULES = {"ledger": 3, "bottling": 3, "cult_scrape_paengi": 2}   # 읽는 규칙이 바뀌면 숫자를 올린다 → 그 자료를 내는 파일을 수정시각과 상관없이 다시 읽는다
 
 
 def parse_ledger(wb, crop, path):
@@ -531,7 +556,7 @@ def _parse_kwon_chain(wb):
         if pd.isna(d) or not q or q <= 0:
             continue
         room = re.search(r"(\d+)", str(col(hdr, r, "발이실") or ""))
-        S.append({"긁기일": d, "접종일": _first_date(col(hdr, r, "접종일"), d), "배양출고": q, "불량": _fnum(col(hdr, r, "LOSS")) or 0.0,
+        S.append({"긁기일": d, "접종일": _first_date(col(hdr, r, "접종일"), d), "접종일목록": _all_dates(col(hdr, r, "접종일"), d), "배양출고": q, "불량": _fnum(col(hdr, r, "LOSS")) or 0.0,
                   "균긁기량": _fnum(col(hdr, r, "입상량")), "방": room.group(1) if room else None, "비고": memo(col(hdr, r, "비고"))})
     if S:
         out["kwon_scrape_paengi"] = pd.DataFrame(S)
