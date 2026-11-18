@@ -3041,6 +3041,9 @@ def main():
         page_report(v)
     elif page == "자료실":
         page_docs(v)
+    elif page == "조직도":
+        from mushroom_app import page_org as PO        # 조직도 (v1.38.0, 모든 계정)
+        PO.render(me)
     elif page == "AI 질문":
         page_ai(v)
     elif page == "계정 관리":
