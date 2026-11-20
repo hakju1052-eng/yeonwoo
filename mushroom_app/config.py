@@ -4,7 +4,7 @@ import os
 
 APP_NAME = "통합관리 시스템"          # 2026-10-08 스마트팜 분석 시스템 → 통합관리 시스템 (반가공 현황까지 함께 보므로)
 APP_AUTHOR = "phj"
-VERSION = "1.39.0"
+VERSION = "1.39.1"
 AI_MODEL = "claude-sonnet-4-5"   # AI 질문창 모델 (Anthropic API)
 # AI 질문창 API 키 파일. 정확한 경로를 알면 AI_KEY_FILE 에 적는다(가장 먼저 본다).
 # 비워두면 환경변수 ANTHROPIC_API_KEY → DATA_DIR → Downloads 바로 아래 폴더 순으로 AI_KEY_NAMES 이름을 찾는다.
@@ -108,6 +108,7 @@ RETORT_LEVELS = [100, 115, 118, 121]
 METER_ROLE = {"팽이배양동": "팽이생육", "팽이발이동": "배양공통", "팽이생육동": "배양공통",
               "새송이1": "새송이생육", "새송이2": "새송이생육", "새송이3": "새송이생육", "기숙사": "기타", "사무실": "기타"}
 LOG_MIN_YEAR = 2025            # 이 연도 폴더('YYYY년')부터 읽음
+LEDGER_HIST_MIN_YEAR = 2024    # 시장 단가 '작년·올해 비교'용: 이 연도부터 LOG_MIN_YEAR 앞까지는 상세일지의 시장 출고 줄만 따로 읽어 둔다 (etl_office.ledger_history)
 LOG_SKIP_DIRS = ("백업", "결산", "#recycle", "청과자료", "월간", "기타", "일지양식")   # 경로에 이 말이 있으면 건너뜀
 
 

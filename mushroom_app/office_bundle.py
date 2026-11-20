@@ -54,6 +54,10 @@ def compute():
         MD = O.market_daily()
     except Exception:
         MD = pd.DataFrame()
+    try:                                     # 지난 해(2024년~)까지 붙인 것 — 시장 단가 '작년·올해 비교'에만 (v1.39.1)
+        MDH = O.market_daily(hist=True)
+    except Exception:
+        MDH = MD
     try:                                     # 팩스 판매원표 (v1.26.0)
         from . import etl_fax
         FXD, FXL = etl_fax.load()
@@ -102,7 +106,7 @@ def compute():
     except Exception:
         ENTCHK = pd.DataFrame()
     used = [p for p in [pm, pi, pu] + list(pp) + list(fs) if p]
-    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used, SBF=SBF, ENTCHK=ENTCHK,
+    return dict(M=M, ME=ME, UN=UN, S=S, I=I, MP=MP, U=U, DY=DY, MD=MD, MDH=MDH, FX=FX, FXD=FXD, FXS=FXS, TW=TW, ST=ST, DEPM=DEPM, DEPSRC=DEPSRC, used=used, SBF=SBF, ENTCHK=ENTCHK,
                 made=time.strftime("%Y-%m-%d %H:%M:%S"), secs=round(time.time() - t0, 1))
 
 

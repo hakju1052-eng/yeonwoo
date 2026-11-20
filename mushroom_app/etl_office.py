@@ -460,15 +460,91 @@ CATALOG = [
 ]
 
 # ───────────────────────── 일별 시장 출하·단가 (포장실 입출고내역) ─────────────────────────
-MARKET_ALIAS = {"대전중앙": "대전중앙청과", "광주중앙": "광주중앙청과"}   # 포장실 장부의 줄임 이름 → 시장단가 표와 같은 이름
+MARKET_ALIAS = {"대전중앙": "대전중앙청과", "광주중앙": "광주중앙청과", "인천농산": "인천농산물"}   # 포장실 장부의 줄임 이름 → 시장단가 표와 같은 이름
+
+HIST_FILE = os.path.join(C.CACHE_DIR, "ledger_hist.parquet")
+_HIST_NAME = re.compile(r"^(20\d{2})년\s*(\d{1,2})월\s*(팽이 생산|새송이(?:양송이)?)\s*상세일지\.xlsx$")
+_HIST_COLS = ["crop", "date", "type", "cust", "sub", "grade", "name", "spec", "unit", "box", "kg", "price", "amt", "note"]
 
 
-def market_daily():
+def _hist_files():
+    """LEDGER_HIST_MIN_YEAR ~ LOG_MIN_YEAR-1 년 폴더의 달별 상세일지 [(경로, 작물)] — 복사본·임시 파일·백업 폴더는 뺀다."""
+    y0 = getattr(C, "LEDGER_HIST_MIN_YEAR", C.LOG_MIN_YEAR)
+    out, seen = [], set()
+    for kind, crop in (("paengi", "팽이"), ("ss", "새송이")):
+        base = C.log_dir(kind)
+        for y in range(y0, C.LOG_MIN_YEAR):
+            for p in sorted(glob.glob(os.path.join(base, "**", f"{y}년", "*상세일지.xlsx"), recursive=True)):
+                name = os.path.basename(p)
+                m = _HIST_NAME.match(name)
+                if not m or int(m.group(1)) != y or name in seen or any(k in os.path.relpath(p, base) for k in C.LOG_SKIP_DIRS):
+                    continue
+                seen.add(name); out.append((p, crop))
+    return out
+
+
+def ledger_history():
+    """지난 해(2024년~) 상세일지 '입출고내역'의 시장 출고 줄 (v1.39.1) — 시장 단가 '작년·올해 비교'에만 쓴다.
+    일지 갱신(etl_logs)은 LOG_MIN_YEAR(2025)부터만 읽으므로 따로 한 번 읽어 app_cache\\ledger_hist.parquet 에 둔다.
+    파일 목록이 같고 원본이 캐시보다 새롭지 않으면 캐시를 그대로 쓴다(지난 해 파일은 바뀌지 않아 사실상 한 번만 읽음, 24개 약 1분).
+    단가가 있는 줄만 남긴다 — 다 정산된 지난 해라 단가 없는 줄은 빈 줄이거나, 2024-01~04 새송이 일지처럼
+    같은 출하를 '실출고'(단가 없음)·'매출'(경락가) 두 번 적은 것의 앞쪽이다."""
+    files = _hist_files()
+    if not files:
+        return pd.DataFrame(columns=_HIST_COLS + ["_src"])
+    names = {os.path.basename(p) for p, _ in files}
+    if os.path.exists(HIST_FILE):
+        try:
+            H = pd.read_parquet(HIST_FILE)
+            mt = os.path.getmtime(HIST_FILE)
+            if set(H["_src"]) == names and all(os.path.getmtime(p) <= mt for p, _ in files):
+                return H
+        except Exception:
+            pass
+    import openpyxl
+    from . import etl_logs
+    parts = []
+    for p, crop in files:
+        try:
+            wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
+            df = etl_logs.parse_ledger(wb, crop, p)
+            wb.close()
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        df = df[(df["type"] == "출고") & (df["cust"].astype(str).str.strip() == "시장")
+                & (pd.to_numeric(df["price"], errors="coerce") > 0) & (pd.to_numeric(df["box"], errors="coerce") > 0)]
+        parts.append(df[_HIST_COLS].assign(_src=os.path.basename(p)))
+    if not parts:
+        return pd.DataFrame(columns=_HIST_COLS + ["_src"])
+    H = pd.concat(parts, ignore_index=True)
+    for c in ("cust", "sub", "grade", "name", "spec", "note"):
+        H[c] = H[c].map(lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) else str(v))
+    H["date"] = pd.to_datetime(H["date"], errors="coerce")
+    try:
+        os.makedirs(C.CACHE_DIR, exist_ok=True)
+        H.to_parquet(HIST_FILE, index=False)
+    except Exception:
+        pass
+    return H
+
+
+def market_daily(hist=False):
     """포장실 '생산 상세일지'(팽이) · '새송이 상세일지'의 '입출고내역' 시트 중 거래처 '시장' 출고 행 = 매일 도매시장 출하.
     etl_logs 의 'ledger' 자료(매일 09:00·15:00 갱신)를 그대로 쓴다. 단가는 박스당 원(경락 후 입력 — 비어 있으면 아직 정산 전).
+    hist=True 면 지난 해(ledger_history, 2024년~) 줄을 앞에 붙인다 — 작년·올해 비교용.
     반환 [날짜, 작물, 시장, 품목, 등급, 규격, 박스당kg, 박스, kg, 박스단가, 금액, 비고]"""
     from . import etl_logs
     L = etl_logs.load("ledger")
+    if hist:
+        try:
+            H = ledger_history()
+        except Exception:
+            H = pd.DataFrame()
+        if len(H):
+            H = H[_HIST_COLS]
+            L = pd.concat([H, L[_HIST_COLS]], ignore_index=True) if L is not None and len(L) else H
     if L is None or L.empty:
         return pd.DataFrame()
     M = L[(L["type"] == "출고") & (L["cust"].astype(str).str.strip() == "시장")].copy()
