@@ -39,6 +39,13 @@ def _eok(v):
     return f"{v / 1e8:,.1f}억" if abs(v) >= 1e8 else f"{v / 1e4:,.0f}만"
 
 
+def _seok(v):
+    """부호 붙인 금액 차이 — '+1.2억' / '-340만'"""
+    if v is None or pd.isna(v):
+        return "—"
+    return ("+" if v >= 0 else "-") + _eok(abs(v))
+
+
 def _pct(a, b):
     return (a / b - 1) * 100 if b and pd.notna(a) and pd.notna(b) and b != 0 else np.nan
 
@@ -289,6 +296,8 @@ def _tab_customers(D):
 def _tab_market(D):
     crop = st.radio("작물", ["팽이", "새송이"], horizontal=True, key="of_mcrop")
     _market_daily(D, crop)
+    st.divider()
+    _market_yoy(D, crop)
     with st.expander("월별 정리표 — 경리의 'M월 팽이·새송이 시장단가' 파일 (2024-06~, 경리가 달마다 정리)"):
         _market_monthly(D, crop)
 
@@ -383,6 +392,106 @@ def _market_daily(D, crop):
         st.dataframe(B, **_FULL, column_config={c: st.column_config.NumberColumn(format="localized") for c in B.columns})
     st.caption("자료: 포장실 'YYYY년 M월 팽이 생산 상세일지' · 'YYYY년 M월 새송이 상세일지'의 '입출고내역' 시트에서 거래처가 '시장'인 출고 행 (2025-01~). "
                "단가는 박스당 경락가(원) — 경락 결과가 들어오기 전 행은 '단가 미정'으로 두고 평균에서 뺍니다. 박스단가 = 금액 합 ÷ 단가가 있는 박스 수.")
+
+
+def _market_yoy(D, crop):
+    """작년·올해 월별 단가 비교 — 포장실 장부 (v1.39.0).
+    '전체'는 규격이 섞여 있어 kg당, 품목을 고르면 박스당. 진행 중인 달은 작년도 같은 날짜까지만 센다."""
+    import calendar
+    MD = D.get("MD", pd.DataFrame())
+    X = MD[MD["작물"] == crop] if len(MD) else MD
+    if X.empty:
+        return
+    st.markdown("**작년·올해 단가 비교** (포장실 장부, 월별)")
+    yrs = sorted(X["날짜"].dt.year.unique())
+    pairs = [int(y) for y in yrs if y - 1 in yrs]
+    if not pairs:
+        st.caption("비교할 작년 자료가 아직 없습니다."); return
+    ALL = "전체 (kg당)"
+    order = X.groupby("품목")["박스"].sum().sort_values(ascending=False).index.tolist()
+    c1, c2 = st.columns([4, 1])
+    item = c1.radio("품목", [ALL] + order, horizontal=True, key=f"of_yitem_{crop}")
+    y1 = c2.selectbox("비교 연도", pairs[::-1], format_func=lambda y: f"{y}년 ↔ {y - 1}년", key=f"of_yyear_{crop}")
+    y0 = y1 - 1
+    per_kg = item == ALL
+    unit = "원/kg" if per_kg else "원/박스"
+    A = (X if per_kg else X[X["품목"] == item])
+    A = A[A["날짜"].dt.year.isin([y0, y1])].copy()
+    if A[A["날짜"].dt.year == y1].empty or A[A["날짜"].dt.year == y0].empty:
+        st.info("이 품목은 두 해를 비교할 자료가 없습니다."); return
+    A["연"] = A["날짜"].dt.year; A["월"] = A["날짜"].dt.month; A["일"] = A["날짜"].dt.day
+    A["분모"] = (A["kg"] if per_kg else A["박스"]).where(A["박스단가"].notna())        # 단가가 들어온 물량만 평균에 넣는다
+    last = A[A["연"] == y1]["날짜"].max()
+    part = last.day < calendar.monthrange(last.year, last.month)[1]                     # 마지막 달이 아직 진행 중인가
+    same = (A["월"] < last.month) | ((A["월"] == last.month) & (A["일"] <= last.day))    # 같은 기간(1/1 ~ 올해 마지막 출하일)
+    use = same | ((A["연"] == y0) & (A["월"] > last.month))                             # 작년의 남은 달은 참고로 그대로 보여 준다
+
+    def agg(df, keys):
+        g = df.groupby(keys).agg(금액=("금액", "sum"), 분모=("분모", "sum"), 박스=("박스", "sum")).reset_index()
+        g["단가"] = (g["금액"] / g["분모"].where(g["분모"] > 0)).round(0)
+        return g
+    S_ = agg(A[same], ["연"]).set_index("연")
+    p0, p1 = S_.loc[y0, "단가"], S_.loc[y1, "단가"]
+    q0, q1 = S_.loc[y0, "분모"], S_.loc[y1, "분모"]
+    a0, a1 = S_.loc[y0, "금액"], S_.loc[y1, "금액"]
+    b0, b1 = S_.loc[y0, "박스"], S_.loc[y1, "박스"]
+    eff_p, eff_q = (p1 - p0) * q1, (q1 - q0) * p0                                       # 금액 차이 = 단가 변동분 + 물량 변동분
+    k = st.columns(4)
+    k[0].metric(f"{y1}년 평균 단가", f"{p1:,.0f}원", _delta(_pct(p1, p0))); k[0].caption(f"{y0}년 같은 기간 {p0:,.0f}원 ({unit})")
+    k[1].metric("출하량", f"{b1:,.0f}박스", _delta(_pct(b1, b0))); k[1].caption(f"{y0}년 같은 기간 {b0:,.0f}박스")
+    k[2].metric("경락 금액", _eok(a1), _seok(a1 - a0)); k[2].caption(f"{y0}년 같은 기간 {_eok(a0)}")
+    k[3].metric("단가가 바뀐 몫", _seok(eff_p)); k[3].caption(f"물량이 바뀐 몫 {_seok(eff_q)} — 둘을 더하면 금액 차이")
+    st.caption(f"같은 기간 = 1/1 ~ {last:%m/%d} (올해 마지막 출하일까지). " + (f"{last.month}월은 진행 중이라 작년도 {last.day}일까지만 셉니다." if part else ""))
+
+    G = agg(A[use], ["연", "월"])
+    W = G.pivot(index="월", columns="연", values="단가").reindex(columns=[y0, y1])
+    B = G.pivot(index="월", columns="연", values="박스").reindex(columns=[y0, y1])
+    T = pd.DataFrame({f"{y0} 단가": W[y0], f"{y1} 단가": W[y1]})
+    T["증감"] = T[f"{y1} 단가"] - T[f"{y0} 단가"]
+    T["증감 %"] = (100 * T["증감"] / T[f"{y0} 단가"]).round(1)
+    T[f"{y0} 박스"] = B[y0]; T[f"{y1} 박스"] = B[y1]
+    T["박스 증감 %"] = (100 * (T[f"{y1} 박스"] / T[f"{y0} 박스"] - 1)).round(1)
+    T = T.reset_index()
+    lab = lambda m: f"{int(m)}월" + (f" (~{last.day}일)" if part and int(m) == last.month else "")
+    c1, c2 = st.columns(2)
+    L = G.dropna(subset=["단가"]).assign(연도=lambda d: d["연"].astype(str) + "년")
+    dom = [f"{y0}년", f"{y1}년"]
+    c1.markdown(f"**월 평균 단가 ({unit})**")
+    c1.altair_chart(alt.Chart(L).mark_line(point=True).encode(
+        x=alt.X("월:O", title=None, axis=alt.Axis(labelExpr="datum.value + '월'", labelAngle=0)),
+        y=alt.Y("단가:Q", title=unit, scale=alt.Scale(zero=False)),
+        color=alt.Color("연도:N", scale=alt.Scale(domain=dom, range=["#9aa0a6", "#2a78d6"]), legend=alt.Legend(orient="top", title=None)),
+        strokeWidth=alt.condition(alt.datum.연도 == dom[1], alt.value(3), alt.value(1.6)),
+        tooltip=["연도:N", alt.Tooltip("월:O", title="월"), alt.Tooltip("단가:Q", format=",.0f", title=unit), alt.Tooltip("박스:Q", format=",.0f")]).properties(height=300), **_FULL)
+    c2.markdown(f"**작년 같은 달 대비 (%)** — {y1}년 단가")
+    Pc = T.dropna(subset=["증감 %"]).assign(방향=lambda d: np.where(d["증감 %"] >= 0, "올랐음", "내렸음"))
+    c2.altair_chart(alt.Chart(Pc).mark_bar().encode(
+        x=alt.X("월:O", title=None, axis=alt.Axis(labelExpr="datum.value + '월'", labelAngle=0)),
+        y=alt.Y("증감 %:Q", title="%"),
+        color=alt.Color("방향:N", scale=alt.Scale(domain=["올랐음", "내렸음"], range=["#1baf7a", "#d64545"]), legend=alt.Legend(orient="top", title=None)),
+        tooltip=[alt.Tooltip("월:O", title="월"), alt.Tooltip("증감 %:Q", format="+.1f"), alt.Tooltip("증감:Q", format="+,.0f", title=f"증감({unit})")]).properties(height=300), **_FULL)
+    tot = {"월": f"같은 기간 (~{last:%m/%d})", f"{y0} 단가": p0, f"{y1} 단가": p1, "증감": p1 - p0, "증감 %": round(_pct(p1, p0), 1),
+           f"{y0} 박스": b0, f"{y1} 박스": b1, "박스 증감 %": round(_pct(b1, b0), 1)}
+    T["월"] = T["월"].map(lab)
+    T = pd.concat([T, pd.DataFrame([tot])], ignore_index=True)
+    num = {c: st.column_config.NumberColumn(format="localized") for c in T.columns if c.endswith("단가") or c.endswith("박스") or c == "증감"}
+    num.update({c: st.column_config.NumberColumn(format="%.1f%%") for c in ("증감 %", "박스 증감 %")})
+    st.dataframe(T, hide_index=True, **_FULL, column_config=num, height=35 * (len(T) + 1) + 3)
+    with st.expander(f"시장별 — 같은 기간 (1/1 ~ {last:%m/%d})"):
+        Mk = agg(A[same], ["시장", "연"])
+        Wm = Mk.pivot(index="시장", columns="연", values="단가").reindex(columns=[y0, y1])
+        Bm = Mk.pivot(index="시장", columns="연", values="박스").reindex(columns=[y0, y1])
+        Tm = pd.DataFrame({f"{y0} 단가": Wm[y0], f"{y1} 단가": Wm[y1]})
+        Tm["증감 %"] = (100 * (Tm[f"{y1} 단가"] / Tm[f"{y0} 단가"] - 1)).round(1)
+        Tm[f"{y0} 박스"] = Bm[y0]; Tm[f"{y1} 박스"] = Bm[y1]
+        Tm["박스 증감 %"] = (100 * (Tm[f"{y1} 박스"] / Tm[f"{y0} 박스"] - 1)).round(1)
+        Tm = Tm.sort_values(f"{y1} 박스", ascending=False, na_position="last").reset_index()
+        numm = {c: st.column_config.NumberColumn(format="localized") for c in Tm.columns if c.endswith("단가") or c.endswith("박스")}
+        numm.update({c: st.column_config.NumberColumn(format="%.1f%%") for c in ("증감 %", "박스 증감 %")})
+        st.dataframe(Tm, hide_index=True, **_FULL, column_config=numm)
+        st.caption("한 해에만 출하한 시장은 그 해 칸만 채워집니다.")
+    st.caption(f"자료: 위 '일별 시장 출하·단가'와 같은 포장실 장부(2025-01~). 단가 = 경락 금액 ÷ 단가가 들어온 물량({unit}). "
+               "'전체'는 규격이 섞여 있어 kg당으로, 품목을 고르면 박스당으로 봅니다. 경락 금액은 수수료·운임을 떼기 전 금액입니다.")
 
 
 def _market_monthly(D, crop):

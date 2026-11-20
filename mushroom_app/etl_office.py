@@ -486,6 +486,8 @@ def market_daily():
                         "비고": M["note"].fillna("").astype(str)})
     out.loc[out["박스단가"] <= 0, "박스단가"] = np.nan        # 0원 = 아직 경락가 안 들어온 것
     out.loc[out["박스단가"].isna(), "금액"] = np.nan
+    fix = out["박스단가"].notna() & (out["박스"] > 0) & ~(out["금액"] > 0)   # 단가는 있는데 금액 칸이 비었거나 0(엑셀 수식이 아직 계산 안 된 새 줄) → 박스 × 단가 (v1.39.0)
+    out.loc[fix, "금액"] = out.loc[fix, "박스"] * out.loc[fix, "박스단가"]
     return out[out["시장"] != ""].reset_index(drop=True)
 
 
