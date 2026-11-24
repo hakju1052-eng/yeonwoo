@@ -328,7 +328,11 @@ def build_weekly(week_end, pm, K, B, an, env, cycles, ph_daily=None, ss_daily=No
     made = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     pdf_buf = io.BytesIO(); A4 = (8.27, 11.69)
     pd_ = ph_daily if ph_daily is not None else etl_logs.load("paengi_daily")
-    sd_ = ss_daily if ss_daily is not None else etl_logs.load("ss_daily")
+    if ss_daily is not None:
+        sd_ = ss_daily
+    else:
+        from . import analysis as _A
+        sd_ = _A.ss_daily_clean()          # 새송이 입상 병수에서 팽이 전환 방 입상분 제외 (v1.40.0)
     H = etl_logs.load("paengi_harvest")
     if not pd_.empty:
         pd_ = pd_.rename(columns={"total_kg": "생산kg", "ipsang": "입상병수"})

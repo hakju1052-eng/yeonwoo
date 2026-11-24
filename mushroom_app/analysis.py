@@ -12,7 +12,175 @@ ENV_COLS = ["temp", "hum", "co2", "sp_temp", "sp_hum", "sp_co2", "heat", "cool",
 
 def env_daily():
     d = etl_env.daily_view()
+    return apply_crop_switch(d)
+
+
+# ───────────────────────── 새송이 재배사 → 팽이 전환 (v1.40.0) ─────────────────────────
+# 2026-11 새송이 재배를 끝내고 연우 재배사 방을 차례로 팽이로 바꾼다(B01 11/16 부터 하루 한 방).
+# 새송이 일지에는 팽이 입상도 '입상 2-1' 로 적혀 새송이 배치처럼 보이므로, 방별 전환일부터는 새송이 자료에서 뺀다.
+_SW_RE = re.compile(r"새송이\s*([1-4])\s*-\s*(\d{1,2})\s*번?\s*(?:재배실|방)?\s*팽이\s*([\d,]+)\s*병\s*입상")
+_SW_CACHE = {}
+
+
+def _worklog_paengi_ipsang():
+    """업무일지에서 '새송이2-1번 팽이11520병 입상' 같은 줄 → [room, 입상일, 병수, 출처]"""
+    from . import etl_worklog
+    try:
+        recs = etl_worklog.load().get("recs") or []
+    except Exception:
+        recs = []
+    rows = []
+    for r in recs:
+        for l in (r.get("lines") or []) + (r.get("note") or []):
+            for m in _SW_RE.finditer(str(l.get("t", ""))):
+                blk = C.SS_BLOCK.get(m.group(1))
+                if not blk:
+                    continue
+                rows.append({"room": f"{blk}{int(m.group(2)):02d}", "입상일": pd.Timestamp(r["d"]).normalize(),
+                             "병수": float(m.group(3).replace(",", "")), "출처": "업무일지 " + str(r.get("who") or "")})
+    W = pd.DataFrame(rows, columns=["room", "입상일", "병수", "출처"])
+    return W.drop_duplicates(["room", "입상일"]).sort_values(["입상일", "room"]).reset_index(drop=True)
+
+
+def crop_switches():
+    """방 → 팽이 전환일(그 방에 팽이를 처음 입상한 날). config.CROP_SWITCH + DATA_DIR\\crop_switch.json(우선) +
+    업무일지에서 찾은 팽이 입상(표에 없는 방만 더함). crop_switch.json 에서 날짜를 null 로 두면 그 방은 전환에서 뺀다.
+    업무일지·json 이 바뀔 때만 다시 계산한다."""
+    import os, json
+    from . import etl_worklog
+    key = []
+    for f in (getattr(etl_worklog, "OUT", None), getattr(C, "CROP_SWITCH_FILE", None)):
+        try:
+            key.append(os.path.getmtime(f))
+        except Exception:
+            key.append(None)
+    key = tuple(key) + (tuple(sorted((getattr(C, "CROP_SWITCH", {}) or {}).items())),)
+    if _SW_CACHE.get("key") == key:
+        return dict(_SW_CACHE["map"])
+    sw, off = {}, set()
+    for rm, d in (getattr(C, "CROP_SWITCH", {}) or {}).items():
+        sw[str(rm)] = pd.Timestamp(d).normalize()
+    try:
+        with open(C.CROP_SWITCH_FILE, encoding="utf-8") as fh:
+            for rm, d in (json.load(fh) or {}).items():
+                if d:
+                    sw[str(rm)] = pd.Timestamp(d).normalize()
+                else:
+                    sw.pop(str(rm), None); off.add(str(rm))
+    except Exception:
+        pass
+    W = _worklog_paengi_ipsang()
+    for rm, d in (W.groupby("room")["입상일"].min().items() if len(W) else []):
+        if rm not in sw and rm not in off:
+            sw[rm] = d
+    _SW_CACHE.update(key=key, map=sw, W=W)
+    return dict(sw)
+
+
+def _after_switch(rooms, dates, sw=None):
+    """각 (방, 날짜)가 그 방의 팽이 전환일 이후인가 (numpy bool 배열)"""
+    sw = crop_switches() if sw is None else sw
+    s = pd.Series(list(rooms), dtype=object).map(sw)
+    d = pd.to_datetime(pd.Series(list(dates)))
+    return (s.notna() & (d >= pd.to_datetime(s))).to_numpy()
+
+
+def apply_crop_switch(d):
+    """환경 일별표의 crop 을 전환일부터 '팽이'로 (새송이 설정값 미사용 같은 새송이 규칙이 팽이 방에 걸리지 않게)"""
+    sw = crop_switches()
+    if d is None or d.empty or not sw or "crop" not in d or "room" not in d:
+        return d
+    m = _after_switch(d["room"], d["date"], sw)
+    if m.any():
+        d = d.copy(); d.loc[m, "crop"] = "팽이"
     return d
+
+
+def ss_events_clean(ev=None):
+    """새송이 작업 이력에서 팽이로 바뀐 방의 전환일 이후 줄을 뺀다"""
+    ev = etl_logs.load("ss_events") if ev is None else ev
+    sw = crop_switches()
+    if ev.empty or not sw:
+        return ev
+    return ev[~_after_switch(ev["room"], ev["date"], sw)].reset_index(drop=True)
+
+
+def ss_daily_clean(d=None):
+    """새송이 일별표의 입상 병수에서 팽이 입상분을 뺀다. 그날 입상한 방이 모두 팽이 방이면 새송이 입상 병수는 빈칸,
+    일부만 팽이면 방 수 비율로 나눈다. 뺀 병수는 '팽이입상병수' 열에."""
+    d = etl_logs.load("ss_daily") if d is None else d
+    sw = crop_switches()
+    if d.empty or not sw or "입상" not in d or "bottles" not in d:
+        return d
+    d = d.copy()
+    d["팽이입상병수"] = np.nan
+    for i, r in d.iterrows():
+        raw = r.get("입상")
+        if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+            continue
+        rooms = etl_logs.ss_rooms(raw)
+        conv = [x for x in rooms if x in sw and pd.Timestamp(r["date"]) >= sw[x]]
+        if not rooms or not conv:
+            continue
+        b = r["bottles"]
+        if pd.isna(b):
+            continue
+        frac = len(conv) / len(rooms)
+        d.at[i, "팽이입상병수"] = b * frac
+        d.at[i, "bottles"] = np.nan if frac >= 1 else b * (1 - frac)
+    return d
+
+
+def paengi_in_ss_rooms(env=None, today=None):
+    """새송이 재배사로 옮긴 팽이 — 전환 방의 팽이 입상 목록. 새송이 일지의 '입상'(전환일 이후)과 업무일지의
+    '…팽이 …병 입상'을 합친다(같은 방 ±1일은 한 건). 병수는 업무일지 > 새송이 일지 순.
+    반환 [방, 입상일, 경과일(입상일=1), 병수, 다음입상, 최근온도, 최근습도, 최근CO2, 설정온도, 기록일, 출처]"""
+    sw = crop_switches()
+    cols = ["방", "입상일", "경과일", "병수", "다음입상", "최근온도", "최근습도", "최근CO2", "설정온도", "기록일", "출처"]
+    if not sw:
+        return pd.DataFrame(columns=cols)
+    W = _SW_CACHE.get("W")
+    W = _worklog_paengi_ipsang() if W is None else W
+    ev = etl_logs.load("ss_events")
+    rows = []
+    if not ev.empty:
+        e = ev[(ev.event == "입상") & _after_switch(ev["room"], ev["date"], sw)]
+        dd = ss_daily_clean()
+        per = {}
+        if len(dd) and "팽이입상병수" in dd:
+            for _, r in dd.dropna(subset=["팽이입상병수"]).iterrows():
+                n = len([x for x in etl_logs.ss_rooms(r.get("입상")) if x in sw and pd.Timestamp(r["date"]) >= sw[x]]) or 1
+                per[pd.Timestamp(r["date"]).normalize()] = r["팽이입상병수"] / n
+        for _, r in e.iterrows():
+            d0 = pd.Timestamp(r["date"]).normalize()
+            rows.append({"방": r["room"], "입상일": d0, "병수": per.get(d0, np.nan), "출처": "새송이 일지"})
+    for _, r in W.iterrows():
+        hit = [x for x in rows if x["방"] == r["room"] and abs((x["입상일"] - r["입상일"]).days) <= 1]
+        if hit:
+            hit[0]["병수"] = r["병수"]; hit[0]["출처"] += " · " + r["출처"]
+        else:
+            rows.append({"방": r["room"], "입상일": r["입상일"], "병수": r["병수"], "출처": r["출처"]})
+    for rm, d in sw.items():                       # 표에만 있고 기록이 없는 전환 방도 한 줄
+        if not any(x["방"] == rm for x in rows):
+            rows.append({"방": rm, "입상일": d, "병수": np.nan, "출처": "전환 표"})
+    T = pd.DataFrame(rows).sort_values(["방", "입상일"]).reset_index(drop=True)
+    T["다음입상"] = T.groupby("방")["입상일"].shift(-1)
+    today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
+    end = T["다음입상"].fillna(today + pd.Timedelta(days=1)) - pd.Timedelta(days=1)
+    T["경과일"] = [int((min(e_, today) - s).days) + 1 for s, e_ in zip(T["입상일"], end)]
+    for c in ("최근온도", "최근습도", "최근CO2", "설정온도"):
+        T[c] = np.nan
+    T["기록일"] = pd.NaT
+    env = env_daily() if env is None else env
+    if env is not None and not env.empty:
+        for i, r in T.iterrows():
+            x = env[(env.room == r["방"]) & (env.date >= r["입상일"]) & (env.date <= end.iloc[i])]
+            if x.empty:
+                continue
+            l = x.sort_values("date").iloc[-1]
+            T.at[i, "최근온도"] = l.get("temp"); T.at[i, "최근습도"] = l.get("hum"); T.at[i, "최근CO2"] = l.get("co2")
+            T.at[i, "설정온도"] = l.get("sp_temp"); T.at[i, "기록일"] = l["date"]
+    return T[cols].sort_values(["입상일", "방"]).reset_index(drop=True)
 
 
 # ───────────────────────── 팽이 ─────────────────────────
@@ -457,8 +625,8 @@ def cult_env_monthly(env=None):
 
 # ───────────────────────── 새송이 ─────────────────────────
 def ss_batches():
-    ev = etl_logs.load("ss_events")
-    daily = etl_logs.load("ss_daily")
+    ev = ss_events_clean()                 # 팽이로 바뀐 방의 전환일 이후 입상·작업은 뺀다 (v1.40.0)
+    daily = ss_daily_clean()
     if ev.empty:
         return pd.DataFrame()
     ips = ev[ev.event == "입상"].groupby("date").room.count().rename("n_rooms")
@@ -700,7 +868,7 @@ def paengi_monthly():
 
 
 def ss_monthly(B=None):
-    d = etl_logs.load("ss_daily")
+    d = ss_daily_clean()                   # 입상 병수에서 팽이 입상분 제외 (v1.40.0)
     k = etl_logs.load("ss_kgcat")
     B = ss_batches() if B is None else B
     if d.empty:

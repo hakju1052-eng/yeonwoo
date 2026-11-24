@@ -32,6 +32,7 @@ PAL = {"실측": "#2a78d6", "설정": "#8a8f84", "비교": "#eb6834", "보조": 
 def _ver():
     """캐시 파일들의 수정시각 → 캐시 키."""
     fs = glob.glob(os.path.join(C.CACHE_DIR, "*.parquet")) + glob.glob(os.path.join(C.CACHE_DIR, "worklog.json"))   # 업무일지에서 수리·배양 이슈를 뽑아 쓴다(v1.35.0)
+    fs += glob.glob(getattr(C, "CROP_SWITCH_FILE", "") or "_none_")                                                   # 새송이 재배사 → 팽이 전환 표 (v1.40.0)
     return tuple(sorted((os.path.basename(f), int(os.path.getmtime(f))) for f in fs))
 
 
@@ -62,6 +63,39 @@ def load_ss(ver):
     B = A.ss_batches()
     SE = A.ss_batch_env(B, env) if not B.empty else pd.DataFrame()
     return B, SE
+
+
+@st.cache_data(max_entries=2, show_spinner=False)
+def load_ss_paengi(ver):
+    """새송이 재배사로 옮긴 팽이 (v1.40.0)"""
+    return A.paengi_in_ss_rooms(load_env(ver))
+
+
+def ss_paengi_box(ver, expanded=True):
+    """배치 탐색기에 '새송이 재배사로 옮긴 팽이' 표 (v1.40.0)"""
+    try:
+        T = load_ss_paengi(ver)
+    except Exception as e:
+        st.caption(f"새송이 재배사 팽이 표를 만들지 못했습니다: {e}"); return
+    if T is None or T.empty:
+        return
+    now = T[T["다음입상"].isna()]
+    with st.expander(f"새송이 재배사로 옮긴 팽이 — 전환한 방 {now['방'].nunique()}개", expanded=expanded):
+        X = T.copy()
+        X["입상일"] = X["입상일"].dt.date; X["다음입상"] = X["다음입상"].dt.date
+        X["기록일"] = pd.to_datetime(X["기록일"]).dt.date
+        st.dataframe(X, hide_index=True, **_FULL,
+                     column_config={"병수": st.column_config.NumberColumn(format="localized"),
+                                    "경과일": st.column_config.NumberColumn("경과일", help="입상일을 1일로 센 날 수 (다음 입상이 있으면 그 전날까지)"),
+                                    "최근온도": st.column_config.NumberColumn("온도 °C", format="%.1f"), "설정온도": st.column_config.NumberColumn("설정 °C", format="%.1f"),
+                                    "최근습도": st.column_config.NumberColumn("습도 %", format="%.0f"), "최근CO2": st.column_config.NumberColumn("CO2 ppm", format="localized"),
+                                    "기록일": st.column_config.DateColumn("환경 기록일", help="유니팜 마지막 기록이 있는 날(그날 평균)")})
+        sw = A.crop_switches()
+        st.caption("2026-11 새송이 재배를 끝내고 연우 재배사 방을 팽이로 바꾸는 중입니다. 새송이 일지의 '입상'(전환일 이후)과 업무일지의 "
+                   "'새송이2-1번 팽이11520병 입상' 같은 줄을 합쳤습니다. 이 방들은 발이실 → 생육실 순환이 아니라 한 방에서 키우므로 아래 팽이 배치(권지 시트 기준)에는 "
+                   "들어가지 않고, 새송이 배치·입상 병수·새송이 이상 감시에서도 뺐습니다. 전환일: "
+                   + ", ".join(f"{k} {v:%m/%d}" for k, v in sorted(sw.items(), key=lambda t: (t[1], t[0])))
+                   + " — 표에 없는 방은 업무일지에서 자동으로 찾고, 고칠 땐 config.CROP_SWITCH 또는 unifarm\\crop_switch.json.")
 
 
 @st.cache_data(max_entries=2, show_spinner=False)
@@ -398,6 +432,7 @@ def page_batches(ver, crop):
         except Exception:
             _notes = {}
         export_candidates_box(K, _notes)
+        ss_paengi_box(ver, expanded=False)
         T = K.copy()
         T["방"] = T["생육실"].map(lambda r: f"생육실{int(r):02d}")
         T["발이"] = T["발이실"].map(lambda r: f"발이실{int(r):02d}" if pd.notna(r) else "—")
@@ -409,6 +444,11 @@ def page_batches(ver, crop):
         B, PE = load_ss(ver)
         if B.empty:
             st.info("새송이 배치가 없습니다. 새송이 일일작업일지가 필요합니다."); return
+        _sw = A.crop_switches()
+        if _sw:
+            st.info("새송이 재배는 2026년 11월로 끝나고 방을 차례로 팽이로 바꾸는 중입니다. 팽이로 바뀐 방("
+                    + ", ".join(f"{k} {v:%m/%d}~" for k, v in sorted(_sw.items(), key=lambda t: (t[1], t[0])))
+                    + ")의 입상은 새송이 배치에서 뺐습니다 — 배치 탐색기(팽이)의 '새송이 재배사로 옮긴 팽이'에서 봅니다.")
         T = B.copy()
         show = T[[c for c in ["bid", "종합평가", "계절상위%", "종합점수", "room", "입상일", "뒤집기_d", "솎기_d", "수확시작_d", "수확일수", "재입상_d", "bottles", "수확kg", "병당g", "미니비중%", "QC종합", "season"] if c in T]].rename(
             columns={"bid": "배치", "계절상위%": "계절 내 위치", "room": "방", "뒤집기_d": "뒤집기일차", "솎기_d": "솎기일차", "수확시작_d": "수확시작일차", "재입상_d": "재입상일차", "bottles": "입상병수", "season": "계절", "QC종합": "QC(50)"})
